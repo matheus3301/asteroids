@@ -38,9 +38,9 @@ func SpawnPlayer(w *World, x, y float64) Entity {
 	w.renderables[e] = &Renderable{
 		Kind: ShapeTriangle,
 		Vertices: [][2]float64{
-			{playerRadius, 0},                                              // nose
-			{-playerRadius * 0.8, -playerRadius * 0.6},                     // left
-			{-playerRadius * 0.8, playerRadius * 0.6},                      // right
+			{playerRadius, 0},                          // nose
+			{-playerRadius * 0.8, -playerRadius * 0.6}, // left
+			{-playerRadius * 0.8, playerRadius * 0.6},  // right
 		},
 		Color: color.RGBA{0, 255, 0, 255},
 		Scale: 1,

@@ -9,14 +9,14 @@ type World struct {
 	entities map[Entity]bool
 
 	// Component stores (struct-of-arrays style)
-	positions map[Entity]*Position
-	velocities map[Entity]*Velocity
-	rotations  map[Entity]*Rotation
-	colliders  map[Entity]*Collider
-	renderables map[Entity]*Renderable
-	players     map[Entity]*PlayerControl
-	asteroids   map[Entity]*AsteroidTag
-	bullets     map[Entity]*BulletTag
+	positions     map[Entity]*Position
+	velocities    map[Entity]*Velocity
+	rotations     map[Entity]*Rotation
+	colliders     map[Entity]*Collider
+	renderables   map[Entity]*Renderable
+	players       map[Entity]*PlayerControl
+	asteroids     map[Entity]*AsteroidTag
+	bullets       map[Entity]*BulletTag
 	particles     map[Entity]*ParticleTag
 	saucers       map[Entity]*SaucerTag
 	saucerBullets map[Entity]*SaucerBulletTag
@@ -25,16 +25,16 @@ type World struct {
 
 func NewWorld() *World {
 	return &World{
-		nextID:      1,
-		entities:    make(map[Entity]bool),
-		positions:   make(map[Entity]*Position),
-		velocities:  make(map[Entity]*Velocity),
-		rotations:   make(map[Entity]*Rotation),
-		colliders:   make(map[Entity]*Collider),
-		renderables: make(map[Entity]*Renderable),
-		players:     make(map[Entity]*PlayerControl),
-		asteroids:   make(map[Entity]*AsteroidTag),
-		bullets:     make(map[Entity]*BulletTag),
+		nextID:        1,
+		entities:      make(map[Entity]bool),
+		positions:     make(map[Entity]*Position),
+		velocities:    make(map[Entity]*Velocity),
+		rotations:     make(map[Entity]*Rotation),
+		colliders:     make(map[Entity]*Collider),
+		renderables:   make(map[Entity]*Renderable),
+		players:       make(map[Entity]*PlayerControl),
+		asteroids:     make(map[Entity]*AsteroidTag),
+		bullets:       make(map[Entity]*BulletTag),
 		particles:     make(map[Entity]*ParticleTag),
 		saucers:       make(map[Entity]*SaucerTag),
 		saucerBullets: make(map[Entity]*SaucerBulletTag),

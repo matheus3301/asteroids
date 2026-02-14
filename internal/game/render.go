@@ -82,7 +82,7 @@ func saucerVertices(radius float64) [][2]float64 {
 		{r, -r * 0.1},        // right rim tip
 		{r * 0.6, -r * 0.3},  // upper-right rim
 		{r * 0.3, -r * 0.7},  // dome right
-		{0, -r},               // dome top
+		{0, -r},              // dome top
 		{-r * 0.3, -r * 0.7}, // dome left
 		{-r * 0.6, -r * 0.3}, // upper-left rim
 		{-r, -r * 0.1},       // left rim tip
