@@ -69,3 +69,8 @@ func (w *World) Destroy(e Entity) {
 func (w *World) Alive(e Entity) bool {
 	return w.entities[e]
 }
+
+// BulletCount returns the number of active player bullets.
+func (w *World) BulletCount() int {
+	return len(w.bullets)
+}

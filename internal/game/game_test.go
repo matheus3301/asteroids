@@ -586,6 +586,60 @@ func TestWaveClear_SaucerSurvives(t *testing.T) {
 	}
 }
 
+func TestBulletLimit_BlocksWhenAtMax(t *testing.T) {
+	g := newPlaying()
+	w := g.world
+
+	// Spawn MaxPlayerBullets bullets manually
+	for i := 0; i < MaxPlayerBullets; i++ {
+		SpawnBullet(w, g.player)
+	}
+	if w.BulletCount() != MaxPlayerBullets {
+		t.Fatalf("expected %d bullets, got %d", MaxPlayerBullets, w.BulletCount())
+	}
+
+	// Simulate pressing shoot — should NOT spawn a 5th bullet
+	pc := w.players[g.player]
+	pc.ShootPressed = true
+	if w.BulletCount() < MaxPlayerBullets {
+		SpawnBullet(w, g.player)
+	}
+
+	if w.BulletCount() != MaxPlayerBullets {
+		t.Errorf("expected %d bullets (capped), got %d", MaxPlayerBullets, w.BulletCount())
+	}
+}
+
+func TestBulletLimit_AllowsAfterExpiry(t *testing.T) {
+	g := newPlaying()
+	w := g.world
+
+	// Spawn MaxPlayerBullets bullets
+	bullets := make([]Entity, 0, MaxPlayerBullets)
+	for i := 0; i < MaxPlayerBullets; i++ {
+		b := SpawnBullet(w, g.player)
+		bullets = append(bullets, b)
+	}
+	if w.BulletCount() != MaxPlayerBullets {
+		t.Fatalf("expected %d bullets, got %d", MaxPlayerBullets, w.BulletCount())
+	}
+
+	// Destroy one bullet (simulating expiry)
+	w.Destroy(bullets[0])
+	if w.BulletCount() != MaxPlayerBullets-1 {
+		t.Fatalf("expected %d bullets after destroy, got %d", MaxPlayerBullets-1, w.BulletCount())
+	}
+
+	// Now shooting should succeed
+	if w.BulletCount() < MaxPlayerBullets {
+		SpawnBullet(w, g.player)
+	}
+
+	if w.BulletCount() != MaxPlayerBullets {
+		t.Errorf("expected %d bullets after re-fire, got %d", MaxPlayerBullets, w.BulletCount())
+	}
+}
+
 func TestScoreValues(t *testing.T) {
 	tests := []struct {
 		name     string

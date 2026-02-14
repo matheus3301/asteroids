@@ -7,9 +7,10 @@ import (
 )
 
 const (
-	playerRadius = 15.0
-	bulletSpeed  = 7.0
-	bulletLife   = 60
+	playerRadius     = 15.0
+	bulletSpeed      = 7.0
+	bulletLife       = 60
+	MaxPlayerBullets = 4
 
 	saucerLargeRadius      = 20.0
 	saucerSmallRadius      = 10.0

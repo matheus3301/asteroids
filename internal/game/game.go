@@ -181,7 +181,9 @@ func (g *Game) updatePlaying() {
 
 	// Handle player shooting
 	if pc, ok := w.players[g.player]; ok && pc.ShootPressed {
-		SpawnBullet(w, g.player)
+		if w.BulletCount() < MaxPlayerBullets {
+			SpawnBullet(w, g.player)
+		}
 	}
 
 	// Collision
