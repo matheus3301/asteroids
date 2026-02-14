@@ -5,8 +5,26 @@ import (
 	"testing"
 )
 
+// newPlaying creates a Game and transitions it to the playing state via reset().
+func newPlaying() *Game {
+	g := New()
+	g.reset()
+	return g
+}
+
 func TestNew_Defaults(t *testing.T) {
 	g := New()
+
+	if g.state != stateMenu {
+		t.Errorf("expected stateMenu, got %v", g.state)
+	}
+	if g.world != nil {
+		t.Error("world should be nil before starting a game")
+	}
+}
+
+func TestReset_Defaults(t *testing.T) {
+	g := newPlaying()
 
 	if g.lives != 3 {
 		t.Errorf("expected 3 lives, got %d", g.lives)
@@ -29,7 +47,7 @@ func TestNew_Defaults(t *testing.T) {
 }
 
 func TestNew_PlayerAtCenter(t *testing.T) {
-	g := New()
+	g := newPlaying()
 
 	pos := g.world.positions[g.player]
 	if pos == nil {
@@ -42,8 +60,8 @@ func TestNew_PlayerAtCenter(t *testing.T) {
 }
 
 func TestSpawnWave_CorrectCount(t *testing.T) {
-	g := New()
-	// After New(), level=1, spawnWave already called → 3+1=4 asteroids
+	g := newPlaying()
+	// After reset(), level=1, spawnWave already called → 3+1=4 asteroids
 	asteroidCount := len(g.world.asteroids)
 	if asteroidCount != 4 {
 		t.Errorf("level 1: expected 4 asteroids, got %d", asteroidCount)
@@ -51,7 +69,7 @@ func TestSpawnWave_CorrectCount(t *testing.T) {
 }
 
 func TestSpawnWave_AsteroidsFarFromPlayer(t *testing.T) {
-	g := New()
+	g := newPlaying()
 
 	playerPos := g.world.positions[g.player]
 	for e := range g.world.asteroids {
@@ -67,7 +85,7 @@ func TestSpawnWave_AsteroidsFarFromPlayer(t *testing.T) {
 }
 
 func TestSpawnWave_Level2HasMoreAsteroids(t *testing.T) {
-	g := New()
+	g := newPlaying()
 
 	// Clear all asteroids to trigger next level manually
 	for e := range g.world.asteroids {
@@ -93,7 +111,7 @@ func TestLayout_ReturnsFixedDimensions(t *testing.T) {
 }
 
 func TestBulletAsteroidCollision_ScoreIncremented(t *testing.T) {
-	g := New()
+	g := newPlaying()
 	// Remove all existing asteroids
 	for e := range g.world.asteroids {
 		g.world.Destroy(e)
@@ -150,7 +168,7 @@ func TestBulletAsteroidCollision_ScoreIncremented(t *testing.T) {
 }
 
 func TestBulletAsteroidCollision_AsteroidSplits(t *testing.T) {
-	g := New()
+	g := newPlaying()
 	for e := range g.world.asteroids {
 		g.world.Destroy(e)
 	}
@@ -190,7 +208,7 @@ func TestBulletAsteroidCollision_AsteroidSplits(t *testing.T) {
 }
 
 func TestSmallAsteroidDoesNotSplit(t *testing.T) {
-	g := New()
+	g := newPlaying()
 	for e := range g.world.asteroids {
 		g.world.Destroy(e)
 	}
@@ -223,7 +241,7 @@ func TestSmallAsteroidDoesNotSplit(t *testing.T) {
 }
 
 func TestPlayerAsteroidCollision_LifeLost(t *testing.T) {
-	g := New()
+	g := newPlaying()
 	for e := range g.world.asteroids {
 		g.world.Destroy(e)
 	}
@@ -254,7 +272,7 @@ func TestPlayerAsteroidCollision_LifeLost(t *testing.T) {
 }
 
 func TestPlayerRespawnsWithInvulnerability(t *testing.T) {
-	g := New()
+	g := newPlaying()
 	for e := range g.world.asteroids {
 		g.world.Destroy(e)
 	}
@@ -304,7 +322,7 @@ func TestPlayerRespawnsWithInvulnerability(t *testing.T) {
 }
 
 func TestGameOver_TriggeredAtZeroLives(t *testing.T) {
-	g := New()
+	g := newPlaying()
 	g.lives = 1
 
 	for e := range g.world.asteroids {
@@ -341,7 +359,7 @@ func TestGameOver_TriggeredAtZeroLives(t *testing.T) {
 }
 
 func TestWaveCleared_TriggersNextLevel(t *testing.T) {
-	g := New()
+	g := newPlaying()
 	oldLevel := g.level
 
 	// Destroy all asteroids to clear the wave
@@ -379,7 +397,7 @@ func TestScoreValues(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := New()
+			g := newPlaying()
 			g.score = 0
 			for e := range g.world.asteroids {
 				g.world.Destroy(e)

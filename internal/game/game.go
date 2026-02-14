@@ -7,7 +7,7 @@ import (
 	"math/rand"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
+	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
 const (
@@ -18,7 +18,10 @@ const (
 type state int
 
 const (
-	statePlaying state = iota
+	stateMenu state = iota
+	stateSettings
+	statePlaying
+	statePaused
 	stateGameOver
 )
 
@@ -30,11 +33,18 @@ type Game struct {
 	lives  int
 	level  int
 	player Entity
+
+	menuCursor     int
+	settingsCursor int
+	pauseCursor    int
+	settings       settings
+	quit           bool
 }
 
 func New() *Game {
-	g := &Game{}
-	g.reset()
+	g := &Game{
+		state: stateMenu,
+	}
 	return g
 }
 
@@ -72,18 +82,33 @@ func (g *Game) spawnWave() {
 }
 
 func (g *Game) Update() error {
+	if g.quit {
+		return ebiten.Termination
+	}
 	switch g.state {
+	case stateMenu:
+		g.updateMenu()
+	case stateSettings:
+		g.updateSettings()
 	case statePlaying:
 		g.updatePlaying()
+	case statePaused:
+		g.updatePaused()
 	case stateGameOver:
-		if ebiten.IsKeyPressed(ebiten.KeyEnter) {
-			g.reset()
+		if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
+			g.state = stateMenu
 		}
 	}
 	return nil
 }
 
 func (g *Game) updatePlaying() {
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.state = statePaused
+		g.pauseCursor = 0
+		return
+	}
+
 	w := g.world
 
 	// Run systems
@@ -182,21 +207,50 @@ func (g *Game) updatePlaying() {
 	}
 }
 
+func (g *Game) drawHUD(screen *ebiten.Image) {
+	hudScale := 2.0
+	hudColor := color.RGBA{255, 255, 255, 255}
+	DrawText(screen, fmt.Sprintf("SCORE: %d", g.score), 10, 10, hudScale, hudColor)
+	DrawText(screen, fmt.Sprintf("LIVES: %d", g.lives), 10, 28, hudScale, hudColor)
+	DrawText(screen, fmt.Sprintf("LEVEL: %d", g.level), 10, 46, hudScale, hudColor)
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
 
-	RenderSystem(g.world, screen)
-	DrawThrust(g.world, screen)
+	switch g.state {
+	case stateMenu:
+		g.drawMenu(screen)
+	case stateSettings:
+		g.drawSettings(screen)
+	case statePlaying:
+		RenderSystem(g.world, screen)
+		DrawThrust(g.world, screen)
+		g.drawHUD(screen)
+	case statePaused:
+		g.drawPaused(screen)
+	case stateGameOver:
+		RenderSystem(g.world, screen)
+		DrawThrust(g.world, screen)
+		g.drawHUD(screen)
 
-	// HUD
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("SCORE: %d", g.score), 10, 10)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("LIVES: %d", g.lives), 10, 30)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("LEVEL: %d", g.level), 10, 50)
+		titleScale := 5.0
+		titleText := "GAME OVER"
+		titleW := TextWidth(titleText, titleScale)
+		titleX := (ScreenWidth - titleW) / 2
+		DrawText(screen, titleText, titleX, float64(ScreenHeight)/2-60, titleScale, color.RGBA{255, 0, 0, 255})
 
-	if g.state == stateGameOver {
-		ebitenutil.DebugPrintAt(screen, "GAME OVER", ScreenWidth/2-30, ScreenHeight/2-20)
-		ebitenutil.DebugPrintAt(screen, fmt.Sprintf("FINAL SCORE: %d", g.score), ScreenWidth/2-50, ScreenHeight/2)
-		ebitenutil.DebugPrintAt(screen, "PRESS ENTER TO RESTART", ScreenWidth/2-70, ScreenHeight/2+20)
+		scoreScale := 2.5
+		scoreText := fmt.Sprintf("FINAL SCORE: %d", g.score)
+		scoreW := TextWidth(scoreText, scoreScale)
+		scoreX := (ScreenWidth - scoreW) / 2
+		DrawText(screen, scoreText, scoreX, float64(ScreenHeight)/2+10, scoreScale, color.RGBA{255, 255, 255, 255})
+
+		hintScale := 2.0
+		hintText := "PRESS ENTER"
+		hintW := TextWidth(hintText, hintScale)
+		hintX := (ScreenWidth - hintW) / 2
+		DrawText(screen, hintText, hintX, float64(ScreenHeight)/2+55, hintScale, color.RGBA{150, 150, 150, 255})
 	}
 }
 
