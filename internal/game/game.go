@@ -30,12 +30,13 @@ const (
 
 // Game implements ebiten.Game and orchestrates the ECS world.
 type Game struct {
-	world  *World
-	state  state
-	score  int
-	lives  int
-	level  int
-	player Entity
+	world           *World
+	state           state
+	score           int
+	lives           int
+	nextExtraLifeAt int
+	level           int
+	player          Entity
 
 	saucerSpawnTimer int
 	saucerActive     Entity
@@ -59,6 +60,7 @@ func (g *Game) reset() {
 	g.state = statePlaying
 	g.score = 0
 	g.lives = 3
+	g.nextExtraLifeAt = 10_000
 	g.level = 1
 	g.saucerSpawnTimer = saucerInitialDelay
 	g.saucerActive = 0
@@ -138,6 +140,13 @@ func (g *Game) destroySaucerAndBullets() {
 	}
 }
 
+func (g *Game) checkExtraLife() {
+	for g.score >= g.nextExtraLifeAt {
+		g.lives++
+		g.nextExtraLifeAt += 10_000
+	}
+}
+
 func (g *Game) updatePlaying() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		g.state = statePaused
@@ -212,6 +221,7 @@ func (g *Game) updatePlaying() {
 		case SizeSmall:
 			g.score += 100
 		}
+		g.checkExtraLife()
 
 		// Particles
 		for i := 0; i < 8; i++ {
@@ -243,6 +253,7 @@ func (g *Game) updatePlaying() {
 		case SaucerSmall:
 			g.score += 1000
 		}
+		g.checkExtraLife()
 
 		for i := 0; i < 12; i++ {
 			SpawnParticle(w, spos.X, spos.Y)

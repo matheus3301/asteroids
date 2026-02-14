@@ -640,6 +640,68 @@ func TestBulletLimit_AllowsAfterExpiry(t *testing.T) {
 	}
 }
 
+func TestExtraLife_AwardedAt10000(t *testing.T) {
+	g := newPlaying()
+	g.score = 9980
+	g.lives = 3
+	g.nextExtraLifeAt = 10_000
+
+	g.score += 20 // large asteroid
+	g.checkExtraLife()
+
+	if g.lives != 4 {
+		t.Errorf("expected 4 lives, got %d", g.lives)
+	}
+	if g.nextExtraLifeAt != 20_000 {
+		t.Errorf("expected nextExtraLifeAt 20000, got %d", g.nextExtraLifeAt)
+	}
+}
+
+func TestExtraLife_NotAwardedBelow(t *testing.T) {
+	g := newPlaying()
+	g.score = 9900
+	g.lives = 3
+	g.nextExtraLifeAt = 10_000
+
+	g.score += 20 // large asteroid, total 9920
+	g.checkExtraLife()
+
+	if g.lives != 3 {
+		t.Errorf("expected 3 lives, got %d", g.lives)
+	}
+	if g.nextExtraLifeAt != 10_000 {
+		t.Errorf("expected nextExtraLifeAt 10000, got %d", g.nextExtraLifeAt)
+	}
+}
+
+func TestExtraLife_MultipleThresholds(t *testing.T) {
+	g := newPlaying()
+	g.score = 29950
+	g.lives = 3
+	g.nextExtraLifeAt = 10_000
+
+	g.score += 100 // small asteroid, total 30050 → crosses 10k, 20k, 30k
+	g.checkExtraLife()
+
+	if g.lives != 6 {
+		t.Errorf("expected 6 lives, got %d", g.lives)
+	}
+	if g.nextExtraLifeAt != 40_000 {
+		t.Errorf("expected nextExtraLifeAt 40000, got %d", g.nextExtraLifeAt)
+	}
+}
+
+func TestReset_ExtraLifeThreshold(t *testing.T) {
+	g := newPlaying()
+	g.nextExtraLifeAt = 50_000 // simulate mid-game state
+
+	g.reset()
+
+	if g.nextExtraLifeAt != 10_000 {
+		t.Errorf("expected nextExtraLifeAt 10000 after reset, got %d", g.nextExtraLifeAt)
+	}
+}
+
 func TestScoreValues(t *testing.T) {
 	tests := []struct {
 		name     string
