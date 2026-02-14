@@ -45,6 +45,8 @@ func InputSystem(w *World) {
 		vel.Y *= friction
 
 		pc.ShootPressed = inpututil.IsKeyJustPressed(ebiten.KeySpace)
+		pc.HyperspacePressed = inpututil.IsKeyJustPressed(ebiten.KeyShiftLeft) ||
+			inpututil.IsKeyJustPressed(ebiten.KeyShiftRight)
 	}
 }
 

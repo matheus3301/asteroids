@@ -147,6 +147,58 @@ func (g *Game) checkExtraLife() {
 	}
 }
 
+func (g *Game) handleHyperspace(rng float64) {
+	w := g.world
+	pc, ok := w.players[g.player]
+	if !ok {
+		return
+	}
+
+	if !pc.HyperspacePressed || pc.HyperspaceCooldown > 0 {
+		if pc.HyperspaceCooldown > 0 {
+			pc.HyperspaceCooldown--
+		}
+		return
+	}
+
+	pos := w.positions[g.player]
+	vel := w.velocities[g.player]
+
+	// Departure particles
+	for i := 0; i < 12; i++ {
+		SpawnParticle(w, pos.X, pos.Y)
+	}
+
+	// Risk: ~1/16 chance of death
+	if rng < 1.0/16.0 {
+		g.lives--
+		g.destroySaucerAndBullets()
+		g.saucerSpawnTimer = saucerRespawnDelay
+		if g.lives <= 0 {
+			g.state = stateGameOver
+			w.Destroy(g.player)
+		} else {
+			pos.X = ScreenWidth / 2
+			pos.Y = ScreenHeight / 2
+			vel.X, vel.Y = 0, 0
+			rot := w.rotations[g.player]
+			if rot != nil {
+				rot.Angle = -math.Pi / 2
+			}
+			pc.Invulnerable = true
+			pc.InvulnerableTimer = 120
+			pc.BlinkTimer = 0
+		}
+	} else {
+		// Successful teleport
+		pos.X = rand.Float64() * ScreenWidth
+		pos.Y = rand.Float64() * ScreenHeight
+		vel.X, vel.Y = 0, 0
+	}
+
+	pc.HyperspaceCooldown = 30
+}
+
 func (g *Game) updatePlaying() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		g.state = statePaused
@@ -187,6 +239,9 @@ func (g *Game) updatePlaying() {
 		g.saucerActive = 0
 		g.saucerSpawnTimer = saucerRespawnDelay
 	}
+
+	// Handle hyperspace
+	g.handleHyperspace(rand.Float64())
 
 	// Handle player shooting
 	if pc, ok := w.players[g.player]; ok && pc.ShootPressed {

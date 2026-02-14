@@ -752,3 +752,145 @@ func TestScoreValues(t *testing.T) {
 		})
 	}
 }
+
+// --------------- Hyperspace ---------------
+
+func TestHyperspace_CooldownDecrement(t *testing.T) {
+	g := newPlaying()
+	pc := g.world.players[g.player]
+	pc.HyperspaceCooldown = 5
+
+	g.handleHyperspace(0.5)
+
+	if pc.HyperspaceCooldown != 4 {
+		t.Errorf("expected HyperspaceCooldown 4, got %d", pc.HyperspaceCooldown)
+	}
+}
+
+func TestHyperspace_TeleportsToNewPosition(t *testing.T) {
+	g := newPlaying()
+	pc := g.world.players[g.player]
+	pc.HyperspacePressed = true
+	pc.HyperspaceCooldown = 0
+
+	pos := g.world.positions[g.player]
+	oldX, oldY := pos.X, pos.Y
+
+	// Use rng value > 1/16 to avoid death
+	g.handleHyperspace(0.5)
+
+	if pos.X == oldX && pos.Y == oldY {
+		t.Error("position should have changed after hyperspace")
+	}
+	vel := g.world.velocities[g.player]
+	if vel.X != 0 || vel.Y != 0 {
+		t.Errorf("velocity should be zeroed, got (%v,%v)", vel.X, vel.Y)
+	}
+}
+
+func TestHyperspace_SetsCooldown(t *testing.T) {
+	g := newPlaying()
+	pc := g.world.players[g.player]
+	pc.HyperspacePressed = true
+	pc.HyperspaceCooldown = 0
+
+	g.handleHyperspace(0.5)
+
+	if pc.HyperspaceCooldown != 30 {
+		t.Errorf("expected HyperspaceCooldown 30, got %d", pc.HyperspaceCooldown)
+	}
+}
+
+func TestHyperspace_BlockedDuringCooldown(t *testing.T) {
+	g := newPlaying()
+	pc := g.world.players[g.player]
+	pc.HyperspacePressed = true
+	pc.HyperspaceCooldown = 10
+
+	pos := g.world.positions[g.player]
+	oldX, oldY := pos.X, pos.Y
+
+	g.handleHyperspace(0.5)
+
+	if pos.X != oldX || pos.Y != oldY {
+		t.Error("position should not change during cooldown")
+	}
+}
+
+func TestHyperspace_AllowedWhileInvulnerable(t *testing.T) {
+	g := newPlaying()
+	pc := g.world.players[g.player]
+	pc.Invulnerable = true
+	pc.InvulnerableTimer = 60
+	pc.HyperspacePressed = true
+	pc.HyperspaceCooldown = 0
+
+	pos := g.world.positions[g.player]
+	oldX, oldY := pos.X, pos.Y
+
+	g.handleHyperspace(0.5)
+
+	if pos.X == oldX && pos.Y == oldY {
+		t.Error("hyperspace should work while invulnerable")
+	}
+}
+
+func TestHyperspace_DeathOnBadLuck(t *testing.T) {
+	g := newPlaying()
+	pc := g.world.players[g.player]
+	pc.HyperspacePressed = true
+	pc.HyperspaceCooldown = 0
+	oldLives := g.lives
+
+	// rng < 1/16 triggers death
+	g.handleHyperspace(0.01)
+
+	if g.lives != oldLives-1 {
+		t.Errorf("expected %d lives, got %d", oldLives-1, g.lives)
+	}
+	// Should respawn at center with invulnerability
+	pos := g.world.positions[g.player]
+	if pos.X != ScreenWidth/2 || pos.Y != ScreenHeight/2 {
+		t.Errorf("expected respawn at center, got (%v,%v)", pos.X, pos.Y)
+	}
+	if !pc.Invulnerable {
+		t.Error("should be invulnerable after hyperspace death")
+	}
+	if pc.InvulnerableTimer != 120 {
+		t.Errorf("expected invulnerability timer 120, got %d", pc.InvulnerableTimer)
+	}
+}
+
+func TestHyperspace_GameOverOnLastLife(t *testing.T) {
+	g := newPlaying()
+	g.lives = 1
+	pc := g.world.players[g.player]
+	pc.HyperspacePressed = true
+	pc.HyperspaceCooldown = 0
+
+	g.handleHyperspace(0.01)
+
+	if g.state != stateGameOver {
+		t.Errorf("expected stateGameOver, got %v", g.state)
+	}
+	if g.world.Alive(g.player) {
+		t.Error("player should be destroyed on game over")
+	}
+}
+
+func TestHyperspace_SpawnsDepartureParticles(t *testing.T) {
+	g := newPlaying()
+	pc := g.world.players[g.player]
+	pc.HyperspacePressed = true
+	pc.HyperspaceCooldown = 0
+
+	particlesBefore := len(g.world.particles)
+
+	g.handleHyperspace(0.5)
+
+	particlesAfter := len(g.world.particles)
+	spawned := particlesAfter - particlesBefore
+	if spawned < 12 {
+		t.Errorf("expected at least 12 new particles, got %d", spawned)
+	}
+}

@@ -42,11 +42,13 @@ type Renderable struct {
 
 // PlayerControl marks an entity as player-controlled and holds player state.
 type PlayerControl struct {
-	Thrusting         bool
-	ShootPressed      bool
-	Invulnerable      bool
-	InvulnerableTimer int
-	BlinkTimer        int
+	Thrusting          bool
+	ShootPressed       bool
+	Invulnerable       bool
+	InvulnerableTimer  int
+	BlinkTimer         int
+	HyperspacePressed  bool
+	HyperspaceCooldown int
 }
 
 // AsteroidSize represents the three asteroid sizes.
