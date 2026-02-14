@@ -457,6 +457,253 @@ func TestCollisionSystem_BulletAndPlayerHitsInSameFrame(t *testing.T) {
 	}
 }
 
+// --------------- SaucerAISystem ---------------
+
+func TestSaucerAISystem_CooldownDecrements(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+	w.saucers[e].ShootCooldown = 10
+
+	SaucerAISystem(w, nil)
+
+	if w.saucers[e].ShootCooldown >= 10 {
+		t.Error("shoot cooldown should have decremented")
+	}
+}
+
+func TestSaucerAISystem_FiresAtZeroCooldown(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+	w.saucers[e].ShootCooldown = 1
+	w.saucers[e].VerticalTimer = 999 // prevent vertical change
+
+	SaucerAISystem(w, nil)
+
+	// A saucer bullet should have been spawned
+	if len(w.saucerBullets) != 1 {
+		t.Errorf("expected 1 saucer bullet after fire, got %d", len(w.saucerBullets))
+	}
+}
+
+func TestSaucerAISystem_CooldownResets(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+	w.saucers[e].ShootCooldown = 1
+	w.saucers[e].VerticalTimer = 999
+
+	SaucerAISystem(w, nil)
+
+	if w.saucers[e] == nil {
+		t.Fatal("saucer should still exist")
+	}
+	if w.saucers[e].ShootCooldown < saucerShootCooldownMin {
+		t.Errorf("cooldown should have reset to at least %d, got %d", saucerShootCooldownMin, w.saucers[e].ShootCooldown)
+	}
+}
+
+func TestSaucerAISystem_VerticalTimerChange(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+	w.saucers[e].VerticalTimer = 1
+	w.saucers[e].ShootCooldown = 999
+
+	SaucerAISystem(w, nil)
+
+	st := w.saucers[e]
+	if st == nil {
+		t.Fatal("saucer should still exist")
+	}
+	if st.VerticalTimer < saucerVerticalTimerMin {
+		t.Error("vertical timer should have reset")
+	}
+}
+
+func TestSaucerAISystem_VerticalWrap(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+	w.positions[e].Y = -1
+	w.saucers[e].ShootCooldown = 999
+	w.saucers[e].VerticalTimer = 999
+
+	SaucerAISystem(w, nil)
+
+	if w.positions[e].Y < 0 {
+		t.Error("saucer Y should have wrapped")
+	}
+}
+
+func TestSaucerAISystem_DespawnAtFarEdge(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+	// Force moving right and past right edge
+	w.saucers[e].DirectionX = 1.0
+	w.positions[e].X = ScreenWidth + 100
+	w.saucers[e].ShootCooldown = 999
+	w.saucers[e].VerticalTimer = 999
+
+	SaucerAISystem(w, nil)
+
+	if w.Alive(e) {
+		t.Error("saucer should have despawned at far edge")
+	}
+}
+
+func TestSaucerAISystem_NilPlayerSafe(t *testing.T) {
+	w := NewWorld()
+	SpawnSaucer(w, SaucerSmall)
+	// Should not panic with nil player position
+	SaucerAISystem(w, nil)
+}
+
+// --------------- SaucerBulletLifetimeSystem ---------------
+
+func TestSaucerBulletLifetimeSystem_Decrements(t *testing.T) {
+	w := NewWorld()
+	e := w.Spawn()
+	w.saucerBullets[e] = &SaucerBulletTag{Life: 10}
+
+	SaucerBulletLifetimeSystem(w)
+
+	if w.saucerBullets[e].Life != 9 {
+		t.Errorf("expected life 9, got %d", w.saucerBullets[e].Life)
+	}
+}
+
+func TestSaucerBulletLifetimeSystem_DestroyedAtZero(t *testing.T) {
+	w := NewWorld()
+	e := w.Spawn()
+	w.saucerBullets[e] = &SaucerBulletTag{Life: 1}
+
+	SaucerBulletLifetimeSystem(w)
+
+	if w.Alive(e) {
+		t.Error("saucer bullet with life 1 should be destroyed after one tick")
+	}
+}
+
+// --------------- CollisionSystem (saucer extensions) ---------------
+
+func TestCollisionSystem_BulletHitsSaucer(t *testing.T) {
+	w := NewWorld()
+
+	bullet := w.Spawn()
+	w.positions[bullet] = &Position{X: 100, Y: 100}
+	w.bullets[bullet] = &BulletTag{Life: 10}
+
+	saucer := w.Spawn()
+	w.positions[saucer] = &Position{X: 105, Y: 100}
+	w.colliders[saucer] = &Collider{Radius: 20}
+	w.saucers[saucer] = &SaucerTag{Size: SaucerLarge}
+
+	events := CollisionSystem(w)
+
+	if len(events.SaucerBulletHits) != 1 {
+		t.Fatalf("expected 1 saucer hit, got %d", len(events.SaucerBulletHits))
+	}
+	if events.SaucerBulletHits[0].Bullet != bullet {
+		t.Error("wrong bullet in saucer hit")
+	}
+	if events.SaucerBulletHits[0].Saucer != saucer {
+		t.Error("wrong saucer in saucer hit")
+	}
+}
+
+func TestCollisionSystem_BulletMissesSaucer(t *testing.T) {
+	w := NewWorld()
+
+	bullet := w.Spawn()
+	w.positions[bullet] = &Position{X: 100, Y: 100}
+	w.bullets[bullet] = &BulletTag{Life: 10}
+
+	saucer := w.Spawn()
+	w.positions[saucer] = &Position{X: 500, Y: 500}
+	w.colliders[saucer] = &Collider{Radius: 20}
+	w.saucers[saucer] = &SaucerTag{Size: SaucerLarge}
+
+	events := CollisionSystem(w)
+
+	if len(events.SaucerBulletHits) != 0 {
+		t.Errorf("expected 0 saucer hits, got %d", len(events.SaucerBulletHits))
+	}
+}
+
+func TestCollisionSystem_SaucerBulletHitsPlayer(t *testing.T) {
+	w := NewWorld()
+
+	player := w.Spawn()
+	w.positions[player] = &Position{X: 100, Y: 100}
+	w.colliders[player] = &Collider{Radius: 15}
+	w.players[player] = &PlayerControl{Invulnerable: false}
+
+	sb := w.Spawn()
+	w.positions[sb] = &Position{X: 105, Y: 100} // within player radius
+	w.saucerBullets[sb] = &SaucerBulletTag{Life: 10}
+
+	events := CollisionSystem(w)
+
+	if !events.PlayerHit {
+		t.Error("saucer bullet should hit player")
+	}
+}
+
+func TestCollisionSystem_SaucerBulletMissesInvulnerablePlayer(t *testing.T) {
+	w := NewWorld()
+
+	player := w.Spawn()
+	w.positions[player] = &Position{X: 100, Y: 100}
+	w.colliders[player] = &Collider{Radius: 15}
+	w.players[player] = &PlayerControl{Invulnerable: true, InvulnerableTimer: 60}
+
+	sb := w.Spawn()
+	w.positions[sb] = &Position{X: 105, Y: 100}
+	w.saucerBullets[sb] = &SaucerBulletTag{Life: 10}
+
+	events := CollisionSystem(w)
+
+	if events.PlayerHit {
+		t.Error("saucer bullet should not hit invulnerable player")
+	}
+}
+
+func TestCollisionSystem_SaucerBodyHitsPlayer(t *testing.T) {
+	w := NewWorld()
+
+	player := w.Spawn()
+	w.positions[player] = &Position{X: 100, Y: 100}
+	w.colliders[player] = &Collider{Radius: 15}
+	w.players[player] = &PlayerControl{Invulnerable: false}
+
+	saucer := w.Spawn()
+	w.positions[saucer] = &Position{X: 110, Y: 100} // within 15+20=35
+	w.colliders[saucer] = &Collider{Radius: 20}
+	w.saucers[saucer] = &SaucerTag{Size: SaucerLarge}
+
+	events := CollisionSystem(w)
+
+	if !events.PlayerHit {
+		t.Error("saucer body should hit player")
+	}
+}
+
+func TestCollisionSystem_ExpiredBulletIgnoredForSaucer(t *testing.T) {
+	w := NewWorld()
+
+	bullet := w.Spawn()
+	w.positions[bullet] = &Position{X: 100, Y: 100}
+	w.bullets[bullet] = &BulletTag{Life: 0}
+
+	saucer := w.Spawn()
+	w.positions[saucer] = &Position{X: 100, Y: 100}
+	w.colliders[saucer] = &Collider{Radius: 20}
+	w.saucers[saucer] = &SaucerTag{Size: SaucerLarge}
+
+	events := CollisionSystem(w)
+
+	if len(events.SaucerBulletHits) != 0 {
+		t.Error("expired bullet should not hit saucer")
+	}
+}
+
 // --------------- PhysicsSystem subtests ---------------
 
 func TestPhysicsSystem(t *testing.T) {

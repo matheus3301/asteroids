@@ -73,3 +73,24 @@ type ParticleTag struct {
 	Life    int
 	MaxLife int
 }
+
+// SaucerSize represents the two saucer variants.
+type SaucerSize int
+
+const (
+	SaucerLarge SaucerSize = iota
+	SaucerSmall
+)
+
+// SaucerTag marks an entity as a flying saucer.
+type SaucerTag struct {
+	Size          SaucerSize
+	DirectionX    float64 // +1.0 (moving right) or -1.0 (moving left)
+	ShootCooldown int     // ticks remaining until next shot
+	VerticalTimer int     // ticks until the next vertical direction change
+}
+
+// SaucerBulletTag marks an entity as a saucer-fired bullet.
+type SaucerBulletTag struct {
+	Life int
+}

@@ -17,8 +17,10 @@ type World struct {
 	players     map[Entity]*PlayerControl
 	asteroids   map[Entity]*AsteroidTag
 	bullets     map[Entity]*BulletTag
-	particles   map[Entity]*ParticleTag
-	wrappers    map[Entity]bool // entities that wrap around screen
+	particles     map[Entity]*ParticleTag
+	saucers       map[Entity]*SaucerTag
+	saucerBullets map[Entity]*SaucerBulletTag
+	wrappers      map[Entity]bool // entities that wrap around screen
 }
 
 func NewWorld() *World {
@@ -33,8 +35,10 @@ func NewWorld() *World {
 		players:     make(map[Entity]*PlayerControl),
 		asteroids:   make(map[Entity]*AsteroidTag),
 		bullets:     make(map[Entity]*BulletTag),
-		particles:   make(map[Entity]*ParticleTag),
-		wrappers:    make(map[Entity]bool),
+		particles:     make(map[Entity]*ParticleTag),
+		saucers:       make(map[Entity]*SaucerTag),
+		saucerBullets: make(map[Entity]*SaucerBulletTag),
+		wrappers:      make(map[Entity]bool),
 	}
 }
 
@@ -56,6 +60,8 @@ func (w *World) Destroy(e Entity) {
 	delete(w.asteroids, e)
 	delete(w.bullets, e)
 	delete(w.particles, e)
+	delete(w.saucers, e)
+	delete(w.saucerBullets, e)
 	delete(w.wrappers, e)
 }
 

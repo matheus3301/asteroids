@@ -10,6 +10,18 @@ const (
 	playerRadius = 15.0
 	bulletSpeed  = 7.0
 	bulletLife   = 60
+
+	saucerLargeRadius      = 20.0
+	saucerSmallRadius      = 10.0
+	saucerLargeSpeed       = 1.5
+	saucerSmallSpeed       = 2.5
+	saucerShootCooldownMin = 60
+	saucerShootCooldownMax = 150
+	saucerBulletSpeed      = 4.0
+	saucerBulletLife       = 90
+	saucerVerticalTimerMin = 60
+	saucerVerticalTimerMax = 180
+	saucerVerticalSpeed    = 0.8
 )
 
 // SpawnPlayer creates the player ship entity.
@@ -119,6 +131,90 @@ func SpawnBullet(w *World, playerEntity Entity) Entity {
 	}
 
 	w.bullets[e] = &BulletTag{Life: bulletLife}
+
+	return e
+}
+
+// SpawnSaucer creates a flying saucer that enters from a screen edge.
+func SpawnSaucer(w *World, size SaucerSize) Entity {
+	e := w.Spawn()
+
+	var radius, speed float64
+	switch size {
+	case SaucerLarge:
+		radius = saucerLargeRadius
+		speed = saucerLargeSpeed
+	case SaucerSmall:
+		radius = saucerSmallRadius
+		speed = saucerSmallSpeed
+	}
+
+	// Enter from left or right edge
+	dirX := 1.0
+	x := -radius
+	if rand.Intn(2) == 0 {
+		dirX = -1.0
+		x = ScreenWidth + radius
+	}
+	// Random Y in middle 60% of screen
+	y := ScreenHeight*0.2 + rand.Float64()*ScreenHeight*0.6
+
+	w.positions[e] = &Position{X: x, Y: y}
+	w.velocities[e] = &Velocity{X: dirX * speed, Y: 0}
+	w.rotations[e] = &Rotation{}
+	w.colliders[e] = &Collider{Radius: radius}
+
+	verts := saucerVertices(radius)
+	w.renderables[e] = &Renderable{
+		Kind:     ShapePolygon,
+		Vertices: verts,
+		Color:    color.RGBA{255, 0, 0, 255},
+		Scale:    1,
+	}
+
+	w.saucers[e] = &SaucerTag{
+		Size:          size,
+		DirectionX:    dirX,
+		ShootCooldown: saucerShootCooldownMin + rand.Intn(saucerShootCooldownMax-saucerShootCooldownMin),
+		VerticalTimer: saucerVerticalTimerMin + rand.Intn(saucerVerticalTimerMax-saucerVerticalTimerMin),
+	}
+
+	return e
+}
+
+// SpawnSaucerBullet creates a bullet fired by a saucer. px, py is the player position (for aimed shots).
+func SpawnSaucerBullet(w *World, saucerEntity Entity, px, py float64) Entity {
+	e := w.Spawn()
+
+	spos := w.positions[saucerEntity]
+	st := w.saucers[saucerEntity]
+
+	var angle float64
+	if st.Size == SaucerSmall {
+		// Aim at player
+		dx := px - spos.X
+		dy := py - spos.Y
+		angle = math.Atan2(dy, dx)
+	} else {
+		// Random direction
+		angle = rand.Float64() * 2 * math.Pi
+	}
+
+	w.positions[e] = &Position{X: spos.X, Y: spos.Y}
+	w.velocities[e] = &Velocity{
+		X: math.Cos(angle) * saucerBulletSpeed,
+		Y: math.Sin(angle) * saucerBulletSpeed,
+	}
+	w.colliders[e] = &Collider{Radius: 2}
+	w.wrappers[e] = true
+
+	w.renderables[e] = &Renderable{
+		Kind:  ShapeCircle,
+		Color: color.RGBA{255, 100, 100, 255},
+		Scale: 2,
+	}
+
+	w.saucerBullets[e] = &SaucerBulletTag{Life: saucerBulletLife}
 
 	return e
 }

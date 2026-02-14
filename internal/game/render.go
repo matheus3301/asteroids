@@ -72,6 +72,43 @@ func drawPolygon(screen *ebiten.Image, pos *Position, angle float64, verts [][2]
 	}
 }
 
+// saucerVertices generates a classic flying saucer outline polygon.
+func saucerVertices(radius float64) [][2]float64 {
+	r := radius
+	return [][2]float64{
+		{-r * 0.4, r * 0.5},  // bottom-left
+		{r * 0.4, r * 0.5},   // bottom-right
+		{r * 0.8, r * 0.1},   // lower-right rim
+		{r, -r * 0.1},        // right rim tip
+		{r * 0.6, -r * 0.3},  // upper-right rim
+		{r * 0.3, -r * 0.7},  // dome right
+		{0, -r},               // dome top
+		{-r * 0.3, -r * 0.7}, // dome left
+		{-r * 0.6, -r * 0.3}, // upper-left rim
+		{-r, -r * 0.1},       // left rim tip
+		{-r * 0.8, r * 0.1},  // lower-left rim
+	}
+}
+
+// DrawSaucerDetail draws interior detail lines on saucers (rim + dome base).
+func DrawSaucerDetail(w *World, screen *ebiten.Image) {
+	for e := range w.saucers {
+		pos := w.positions[e]
+		r := w.renderables[e]
+		if pos == nil || r == nil {
+			continue
+		}
+
+		radius := w.colliders[e].Radius
+		clr := r.Color
+
+		// Rim line (full width at Y=0)
+		strokeLine(screen, pos.X-radius, pos.Y-radius*0.1, pos.X+radius, pos.Y-radius*0.1, clr)
+		// Dome base line (narrower, above rim)
+		strokeLine(screen, pos.X-radius*0.6, pos.Y-radius*0.3, pos.X+radius*0.6, pos.Y-radius*0.3, clr)
+	}
+}
+
 // DrawThrust draws the flame behind the player ship.
 func DrawThrust(w *World, screen *ebiten.Image) {
 	for e, pc := range w.players {

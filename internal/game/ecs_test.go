@@ -27,6 +27,8 @@ func TestDestroyRemovesFromAllStores(t *testing.T) {
 	w.asteroids[e] = &AsteroidTag{}
 	w.bullets[e] = &BulletTag{Life: 10}
 	w.particles[e] = &ParticleTag{Life: 5, MaxLife: 5}
+	w.saucers[e] = &SaucerTag{Size: SaucerLarge}
+	w.saucerBullets[e] = &SaucerBulletTag{Life: 10}
 	w.wrappers[e] = true
 
 	w.Destroy(e)
@@ -60,6 +62,12 @@ func TestDestroyRemovesFromAllStores(t *testing.T) {
 	}
 	if w.particles[e] != nil {
 		t.Error("particles not cleaned up")
+	}
+	if w.saucers[e] != nil {
+		t.Error("saucers not cleaned up")
+	}
+	if w.saucerBullets[e] != nil {
+		t.Error("saucerBullets not cleaned up")
 	}
 	if w.wrappers[e] {
 		t.Error("wrappers not cleaned up")

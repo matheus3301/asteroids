@@ -313,6 +313,196 @@ func TestSpawnBullet_IsWrapped(t *testing.T) {
 	}
 }
 
+// --------------- SpawnSaucer ---------------
+
+func TestSpawnSaucer_HasAllComponents(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+
+	if w.positions[e] == nil {
+		t.Error("missing position")
+	}
+	if w.velocities[e] == nil {
+		t.Error("missing velocity")
+	}
+	if w.rotations[e] == nil {
+		t.Error("missing rotation")
+	}
+	if w.colliders[e] == nil {
+		t.Error("missing collider")
+	}
+	if w.renderables[e] == nil {
+		t.Error("missing renderable")
+	}
+	if w.saucers[e] == nil {
+		t.Error("missing saucer tag")
+	}
+}
+
+func TestSpawnSaucer_NotAWrapper(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+
+	if w.wrappers[e] {
+		t.Error("saucer should NOT be a wrapper entity")
+	}
+}
+
+func TestSpawnSaucer_LargeRadius(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+
+	col := w.colliders[e]
+	if col.Radius != 20 {
+		t.Errorf("expected large saucer radius 20, got %v", col.Radius)
+	}
+}
+
+func TestSpawnSaucer_SmallRadius(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerSmall)
+
+	col := w.colliders[e]
+	if col.Radius != 10 {
+		t.Errorf("expected small saucer radius 10, got %v", col.Radius)
+	}
+}
+
+func TestSpawnSaucer_EdgeSpawn(t *testing.T) {
+	// Run multiple times to verify spawns are at edges
+	for i := 0; i < 20; i++ {
+		w := NewWorld()
+		e := SpawnSaucer(w, SaucerLarge)
+		pos := w.positions[e]
+		col := w.colliders[e]
+
+		atLeft := pos.X == -col.Radius
+		atRight := pos.X == ScreenWidth+col.Radius
+		if !atLeft && !atRight {
+			t.Errorf("saucer should spawn at edge, got X=%v", pos.X)
+		}
+	}
+}
+
+func TestSpawnSaucer_VelocityMatchesDirection(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		w := NewWorld()
+		e := SpawnSaucer(w, SaucerLarge)
+		vel := w.velocities[e]
+		st := w.saucers[e]
+
+		if st.DirectionX > 0 && vel.X <= 0 {
+			t.Error("saucer moving right should have positive X velocity")
+		}
+		if st.DirectionX < 0 && vel.X >= 0 {
+			t.Error("saucer moving left should have negative X velocity")
+		}
+	}
+}
+
+func TestSpawnSaucer_PolygonRenderable(t *testing.T) {
+	w := NewWorld()
+	e := SpawnSaucer(w, SaucerLarge)
+
+	r := w.renderables[e]
+	if r.Kind != ShapePolygon {
+		t.Errorf("expected ShapePolygon, got %v", r.Kind)
+	}
+	if len(r.Vertices) < 8 {
+		t.Errorf("expected at least 8 vertices for saucer shape, got %d", len(r.Vertices))
+	}
+	if r.Color != (color.RGBA{255, 0, 0, 255}) {
+		t.Errorf("expected red, got %v", r.Color)
+	}
+}
+
+// --------------- SpawnSaucerBullet ---------------
+
+func TestSpawnSaucerBullet_HasAllComponents(t *testing.T) {
+	w := NewWorld()
+	saucer := SpawnSaucer(w, SaucerLarge)
+	e := SpawnSaucerBullet(w, saucer, 400, 300)
+
+	if w.positions[e] == nil {
+		t.Error("missing position")
+	}
+	if w.velocities[e] == nil {
+		t.Error("missing velocity")
+	}
+	if w.colliders[e] == nil {
+		t.Error("missing collider")
+	}
+	if w.renderables[e] == nil {
+		t.Error("missing renderable")
+	}
+	if w.saucerBullets[e] == nil {
+		t.Error("missing saucer bullet tag")
+	}
+}
+
+func TestSpawnSaucerBullet_IsWrapper(t *testing.T) {
+	w := NewWorld()
+	saucer := SpawnSaucer(w, SaucerLarge)
+	e := SpawnSaucerBullet(w, saucer, 400, 300)
+
+	if !w.wrappers[e] {
+		t.Error("saucer bullet should be a wrapper entity")
+	}
+}
+
+func TestSpawnSaucerBullet_Lifetime(t *testing.T) {
+	w := NewWorld()
+	saucer := SpawnSaucer(w, SaucerLarge)
+	e := SpawnSaucerBullet(w, saucer, 400, 300)
+
+	sb := w.saucerBullets[e]
+	if sb.Life != 90 {
+		t.Errorf("expected saucer bullet life 90, got %d", sb.Life)
+	}
+}
+
+func TestSpawnSaucerBullet_SpeedMagnitude(t *testing.T) {
+	w := NewWorld()
+	saucer := SpawnSaucer(w, SaucerLarge)
+	e := SpawnSaucerBullet(w, saucer, 400, 300)
+
+	vel := w.velocities[e]
+	speed := math.Sqrt(vel.X*vel.X + vel.Y*vel.Y)
+	if math.Abs(speed-4.0) > 0.01 {
+		t.Errorf("expected saucer bullet speed 4.0, got %v", speed)
+	}
+}
+
+func TestSpawnSaucerBullet_SmallSaucerAimsAtPlayer(t *testing.T) {
+	w := NewWorld()
+	saucer := SpawnSaucer(w, SaucerSmall)
+	// Force saucer position to known location
+	w.positions[saucer] = &Position{X: 100, Y: 100}
+
+	e := SpawnSaucerBullet(w, saucer, 200, 100) // player is to the right
+
+	vel := w.velocities[e]
+	// Bullet should be going mostly rightward
+	if vel.X <= 0 {
+		t.Errorf("small saucer bullet aimed at player to the right should have positive X velocity, got %v", vel.X)
+	}
+	// Y should be near zero since player is at same height
+	if math.Abs(vel.Y) > 0.1 {
+		t.Errorf("small saucer bullet should have near-zero Y when player at same height, got %v", vel.Y)
+	}
+}
+
+func TestSpawnSaucerBullet_ReddishColor(t *testing.T) {
+	w := NewWorld()
+	saucer := SpawnSaucer(w, SaucerLarge)
+	e := SpawnSaucerBullet(w, saucer, 400, 300)
+
+	r := w.renderables[e]
+	if r.Color != (color.RGBA{255, 100, 100, 255}) {
+		t.Errorf("expected reddish color, got %v", r.Color)
+	}
+}
+
 // --------------- SpawnParticle ---------------
 
 func TestSpawnParticle_HasPosition(t *testing.T) {

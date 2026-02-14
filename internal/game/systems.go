@@ -2,6 +2,7 @@ package game
 
 import (
 	"math"
+	"math/rand"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -114,16 +115,81 @@ func InvulnerabilitySystem(w *World) {
 	}
 }
 
+// SaucerAISystem updates saucer behavior: shooting, vertical movement, despawn.
+func SaucerAISystem(w *World, playerPos *Position) {
+	for e, st := range w.saucers {
+		pos := w.positions[e]
+		vel := w.velocities[e]
+		if pos == nil || vel == nil {
+			continue
+		}
+
+		// Shoot cooldown
+		st.ShootCooldown--
+		if st.ShootCooldown <= 0 {
+			px, py := 0.0, 0.0
+			if playerPos != nil {
+				px, py = playerPos.X, playerPos.Y
+			}
+			SpawnSaucerBullet(w, e, px, py)
+			st.ShootCooldown = saucerShootCooldownMin + rand.Intn(saucerShootCooldownMax-saucerShootCooldownMin)
+		}
+
+		// Vertical direction changes
+		st.VerticalTimer--
+		if st.VerticalTimer <= 0 {
+			choices := []float64{-saucerVerticalSpeed, 0, saucerVerticalSpeed}
+			vel.Y = choices[rand.Intn(3)]
+			st.VerticalTimer = saucerVerticalTimerMin + rand.Intn(saucerVerticalTimerMax-saucerVerticalTimerMin)
+		}
+
+		// Vertical wrap
+		if pos.Y < 0 {
+			pos.Y += ScreenHeight
+		} else if pos.Y > ScreenHeight {
+			pos.Y -= ScreenHeight
+		}
+
+		// Despawn at far edge
+		col := w.colliders[e]
+		radius := 0.0
+		if col != nil {
+			radius = col.Radius
+		}
+		if st.DirectionX > 0 && pos.X > ScreenWidth+radius {
+			w.Destroy(e)
+		} else if st.DirectionX < 0 && pos.X < -radius {
+			w.Destroy(e)
+		}
+	}
+}
+
+// SaucerBulletLifetimeSystem decrements saucer bullet lifetimes and destroys expired ones.
+func SaucerBulletLifetimeSystem(w *World) {
+	for e, sb := range w.saucerBullets {
+		sb.Life--
+		if sb.Life <= 0 {
+			w.Destroy(e)
+		}
+	}
+}
+
 // CollisionEvent describes what happened during a collision check.
 type CollisionEvent struct {
-	BulletHits  []bulletHit
-	PlayerHit   bool
-	PlayerEntity Entity
+	BulletHits       []bulletHit
+	SaucerBulletHits []saucerHit
+	PlayerHit        bool
+	PlayerEntity     Entity
 }
 
 type bulletHit struct {
 	Bullet   Entity
 	Asteroid Entity
+}
+
+type saucerHit struct {
+	Bullet Entity
+	Saucer Entity
 }
 
 // CollisionSystem checks bullet-asteroid and player-asteroid collisions.
@@ -157,6 +223,33 @@ func CollisionSystem(w *World) CollisionEvent {
 		}
 	}
 
+	// Player Bullet vs Saucer
+	for be, bt := range w.bullets {
+		if bt.Life <= 0 {
+			continue
+		}
+		bpos := w.positions[be]
+		if bpos == nil {
+			continue
+		}
+		for se := range w.saucers {
+			spos := w.positions[se]
+			scol := w.colliders[se]
+			if spos == nil || scol == nil {
+				continue
+			}
+			dx := bpos.X - spos.X
+			dy := bpos.Y - spos.Y
+			if dx*dx+dy*dy < scol.Radius*scol.Radius {
+				events.SaucerBulletHits = append(events.SaucerBulletHits, saucerHit{
+					Bullet: be,
+					Saucer: se,
+				})
+				break
+			}
+		}
+	}
+
 	// Player vs Asteroid
 	for pe, pc := range w.players {
 		if pc.Invulnerable {
@@ -177,6 +270,38 @@ func CollisionSystem(w *World) CollisionEvent {
 			dy := ppos.Y - apos.Y
 			dist := math.Sqrt(dx*dx + dy*dy)
 			if dist < pcol.Radius+acol.Radius {
+				events.PlayerHit = true
+				events.PlayerEntity = pe
+				return events
+			}
+		}
+
+		// Saucer Bullet vs Player
+		for sbe := range w.saucerBullets {
+			sbpos := w.positions[sbe]
+			if sbpos == nil {
+				continue
+			}
+			dx := ppos.X - sbpos.X
+			dy := ppos.Y - sbpos.Y
+			if dx*dx+dy*dy < pcol.Radius*pcol.Radius {
+				events.PlayerHit = true
+				events.PlayerEntity = pe
+				return events
+			}
+		}
+
+		// Saucer Body vs Player
+		for se := range w.saucers {
+			spos := w.positions[se]
+			scol := w.colliders[se]
+			if spos == nil || scol == nil {
+				continue
+			}
+			dx := ppos.X - spos.X
+			dy := ppos.Y - spos.Y
+			dist := math.Sqrt(dx*dx + dy*dy)
+			if dist < pcol.Radius+scol.Radius {
 				events.PlayerHit = true
 				events.PlayerEntity = pe
 				return events
