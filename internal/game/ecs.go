@@ -21,6 +21,15 @@ type World struct {
 	saucers       map[Entity]*SaucerTag
 	saucerBullets map[Entity]*SaucerBulletTag
 	wrappers      map[Entity]bool // entities that wrap around screen
+
+	// Singleton game-progression state
+	Player           Entity
+	Score            int
+	Lives            int
+	Level            int
+	NextExtraLifeAt  int
+	SaucerActive     Entity
+	SaucerSpawnTimer int
 }
 
 func NewWorld() *World {

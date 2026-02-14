@@ -3,7 +3,6 @@ package game
 import (
 	"fmt"
 	"image/color"
-	"math"
 	"math/rand"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -30,16 +29,8 @@ const (
 
 // Game implements ebiten.Game and orchestrates the ECS world.
 type Game struct {
-	world           *World
-	state           state
-	score           int
-	lives           int
-	nextExtraLifeAt int
-	level           int
-	player          Entity
-
-	saucerSpawnTimer int
-	saucerActive     Entity
+	world *World
+	state state
 
 	menuCursor     int
 	settingsCursor int
@@ -58,37 +49,15 @@ func New() *Game {
 func (g *Game) reset() {
 	g.world = NewWorld()
 	g.state = statePlaying
-	g.score = 0
-	g.lives = 3
-	g.nextExtraLifeAt = 10_000
-	g.level = 1
-	g.saucerSpawnTimer = saucerInitialDelay
-	g.saucerActive = 0
-	g.player = SpawnPlayer(g.world, ScreenWidth/2, ScreenHeight/2)
-	g.spawnWave()
-}
-
-func (g *Game) spawnWave() {
-	count := 3 + g.level
-	playerPos := g.world.positions[g.player]
-
-	for i := 0; i < count; i++ {
-		var x, y float64
-		for {
-			x = rand.Float64() * ScreenWidth
-			y = rand.Float64() * ScreenHeight
-			if playerPos != nil {
-				dx := x - playerPos.X
-				dy := y - playerPos.Y
-				if math.Sqrt(dx*dx+dy*dy) > 150 {
-					break
-				}
-			} else {
-				break
-			}
-		}
-		SpawnAsteroid(g.world, x, y, SizeLarge)
-	}
+	w := g.world
+	w.Score = 0
+	w.Lives = 3
+	w.NextExtraLifeAt = 10_000
+	w.Level = 1
+	w.SaucerSpawnTimer = saucerInitialDelay
+	w.SaucerActive = 0
+	w.Player = SpawnPlayer(w, ScreenWidth/2, ScreenHeight/2)
+	spawnWave(w)
 }
 
 func (g *Game) Update() error {
@@ -112,266 +81,40 @@ func (g *Game) Update() error {
 	return nil
 }
 
-// chooseSaucerSize picks a saucer size based on score.
-// Large below 10K, small above 40K, linear interpolation between.
-func chooseSaucerSize(score int) SaucerSize {
-	if score < 10000 {
-		return SaucerLarge
-	}
-	if score >= 40000 {
-		return SaucerSmall
-	}
-	// Linear interpolation: chance of small increases from 0% at 10K to 100% at 40K
-	smallChance := float64(score-10000) / 30000.0
-	if rand.Float64() < smallChance {
-		return SaucerSmall
-	}
-	return SaucerLarge
-}
-
-func (g *Game) destroySaucerAndBullets() {
-	w := g.world
-	if g.saucerActive != 0 && w.Alive(g.saucerActive) {
-		w.Destroy(g.saucerActive)
-	}
-	g.saucerActive = 0
-	for e := range w.saucerBullets {
-		w.Destroy(e)
-	}
-}
-
-func (g *Game) checkExtraLife() {
-	for g.score >= g.nextExtraLifeAt {
-		g.lives++
-		g.nextExtraLifeAt += 10_000
-	}
-}
-
-func (g *Game) handleHyperspace(rng float64) {
-	w := g.world
-	pc, ok := w.players[g.player]
-	if !ok {
-		return
-	}
-
-	if !pc.HyperspacePressed || pc.HyperspaceCooldown > 0 {
-		if pc.HyperspaceCooldown > 0 {
-			pc.HyperspaceCooldown--
-		}
-		return
-	}
-
-	pos := w.positions[g.player]
-	vel := w.velocities[g.player]
-
-	// Departure particles
-	for i := 0; i < 12; i++ {
-		SpawnParticle(w, pos.X, pos.Y)
-	}
-
-	// Risk: ~1/16 chance of death
-	if rng < 1.0/16.0 {
-		g.lives--
-		g.destroySaucerAndBullets()
-		g.saucerSpawnTimer = saucerRespawnDelay
-		if g.lives <= 0 {
-			g.state = stateGameOver
-			w.Destroy(g.player)
-		} else {
-			pos.X = ScreenWidth / 2
-			pos.Y = ScreenHeight / 2
-			vel.X, vel.Y = 0, 0
-			rot := w.rotations[g.player]
-			if rot != nil {
-				rot.Angle = -math.Pi / 2
-			}
-			pc.Invulnerable = true
-			pc.InvulnerableTimer = 120
-			pc.BlinkTimer = 0
-		}
-	} else {
-		// Successful teleport
-		pos.X = rand.Float64() * ScreenWidth
-		pos.Y = rand.Float64() * ScreenHeight
-		vel.X, vel.Y = 0, 0
-	}
-
-	pc.HyperspaceCooldown = 30
-}
-
 func (g *Game) updatePlaying() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		g.state = statePaused
 		g.pauseCursor = 0
 		return
 	}
-
 	w := g.world
 
-	// Run systems
 	InputSystem(w)
 	PhysicsSystem(w)
 	WrapSystem(w)
 	InvulnerabilitySystem(w)
 	LifetimeSystem(w)
-
-	// Saucer spawn timer
-	if g.saucerActive == 0 || !w.Alive(g.saucerActive) {
-		g.saucerActive = 0
-		g.saucerSpawnTimer--
-		if g.saucerSpawnTimer <= 0 {
-			size := chooseSaucerSize(g.score)
-			g.saucerActive = SpawnSaucer(w, size)
-			g.saucerSpawnTimer = saucerRespawnDelay
-		}
-	}
-
-	// Saucer AI and bullet lifetime
-	var playerPos *Position
-	if w.Alive(g.player) {
-		playerPos = w.positions[g.player]
-	}
-	SaucerAISystem(w, playerPos)
+	SaucerSpawnSystem(w)
+	SaucerAISystem(w)
 	SaucerBulletLifetimeSystem(w)
-
-	// Check if saucer was despawned by AI system
-	if g.saucerActive != 0 && !w.Alive(g.saucerActive) {
-		g.saucerActive = 0
-		g.saucerSpawnTimer = saucerRespawnDelay
-	}
-
-	// Handle hyperspace
-	g.handleHyperspace(rand.Float64())
-
-	// Handle player shooting
-	if pc, ok := w.players[g.player]; ok && pc.ShootPressed {
-		if w.BulletCount() < MaxPlayerBullets {
-			SpawnBullet(w, g.player)
-		}
-	}
-
-	// Collision
+	SaucerDespawnSystem(w)
+	HyperspaceSystem(w, rand.Float64())
+	ShootingSystem(w)
 	events := CollisionSystem(w)
+	CollisionResponseSystem(w, events)
+	WaveClearSystem(w)
 
-	// Process bullet hits on asteroids
-	destroyed := make(map[Entity]bool)
-	for _, hit := range events.BulletHits {
-		if destroyed[hit.Asteroid] {
-			continue
-		}
-		destroyed[hit.Asteroid] = true
-
-		ast := w.asteroids[hit.Asteroid]
-		apos := w.positions[hit.Asteroid]
-		if ast == nil || apos == nil {
-			continue
-		}
-
-		// Score
-		switch ast.Size {
-		case SizeLarge:
-			g.score += 20
-		case SizeMedium:
-			g.score += 50
-		case SizeSmall:
-			g.score += 100
-		}
-		g.checkExtraLife()
-
-		// Particles
-		for i := 0; i < 8; i++ {
-			SpawnParticle(w, apos.X, apos.Y)
-		}
-
-		// Split
-		if ast.Size != SizeSmall {
-			nextSize := ast.Size + 1
-			SpawnAsteroid(w, apos.X, apos.Y, nextSize)
-			SpawnAsteroid(w, apos.X, apos.Y, nextSize)
-		}
-
-		w.Destroy(hit.Bullet)
-		w.Destroy(hit.Asteroid)
-	}
-
-	// Process bullet hits on saucers
-	for _, hit := range events.SaucerBulletHits {
-		st := w.saucers[hit.Saucer]
-		spos := w.positions[hit.Saucer]
-		if st == nil || spos == nil {
-			continue
-		}
-
-		switch st.Size {
-		case SaucerLarge:
-			g.score += 200
-		case SaucerSmall:
-			g.score += 1000
-		}
-		g.checkExtraLife()
-
-		for i := 0; i < 12; i++ {
-			SpawnParticle(w, spos.X, spos.Y)
-		}
-
-		w.Destroy(hit.Bullet)
-		w.Destroy(hit.Saucer)
-		g.saucerActive = 0
-		g.saucerSpawnTimer = saucerRespawnDelay
-	}
-
-	// Process player hit
-	if events.PlayerHit {
-		g.lives--
-		ppos := w.positions[g.player]
-		if ppos != nil {
-			for i := 0; i < 15; i++ {
-				SpawnParticle(w, ppos.X, ppos.Y)
-			}
-		}
-
-		// Clean up saucer and its bullets on player death
-		g.destroySaucerAndBullets()
-		g.saucerSpawnTimer = saucerRespawnDelay
-
-		if g.lives <= 0 {
-			g.state = stateGameOver
-			w.Destroy(g.player)
-		} else {
-			// Respawn
-			ppos.X = ScreenWidth / 2
-			ppos.Y = ScreenHeight / 2
-			vel := w.velocities[g.player]
-			if vel != nil {
-				vel.X = 0
-				vel.Y = 0
-			}
-			rot := w.rotations[g.player]
-			if rot != nil {
-				rot.Angle = -math.Pi / 2
-			}
-			pc := w.players[g.player]
-			if pc != nil {
-				pc.Invulnerable = true
-				pc.InvulnerableTimer = 120
-				pc.BlinkTimer = 0
-			}
-		}
-	}
-
-	// Check if wave cleared
-	if len(w.asteroids) == 0 {
-		g.level++
-		g.spawnWave()
+	if w.Lives <= 0 {
+		g.state = stateGameOver
 	}
 }
 
 func (g *Game) drawHUD(screen *ebiten.Image) {
 	hudScale := 2.0
 	hudColor := color.RGBA{255, 255, 255, 255}
-	DrawText(screen, fmt.Sprintf("SCORE: %d", g.score), 10, 10, hudScale, hudColor)
-	DrawText(screen, fmt.Sprintf("LIVES: %d", g.lives), 10, 28, hudScale, hudColor)
-	DrawText(screen, fmt.Sprintf("LEVEL: %d", g.level), 10, 46, hudScale, hudColor)
+	DrawText(screen, fmt.Sprintf("SCORE: %d", g.world.Score), 10, 10, hudScale, hudColor)
+	DrawText(screen, fmt.Sprintf("LIVES: %d", g.world.Lives), 10, 28, hudScale, hudColor)
+	DrawText(screen, fmt.Sprintf("LEVEL: %d", g.world.Level), 10, 46, hudScale, hudColor)
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
@@ -402,7 +145,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		DrawText(screen, titleText, titleX, float64(ScreenHeight)/2-60, titleScale, color.RGBA{255, 0, 0, 255})
 
 		scoreScale := 2.5
-		scoreText := fmt.Sprintf("FINAL SCORE: %d", g.score)
+		scoreText := fmt.Sprintf("FINAL SCORE: %d", g.world.Score)
 		scoreW := TextWidth(scoreText, scoreScale)
 		scoreX := (ScreenWidth - scoreW) / 2
 		DrawText(screen, scoreText, scoreX, float64(ScreenHeight)/2+10, scoreScale, color.RGBA{255, 255, 255, 255})

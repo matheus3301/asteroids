@@ -464,7 +464,7 @@ func TestSaucerAISystem_CooldownDecrements(t *testing.T) {
 	e := SpawnSaucer(w, SaucerLarge)
 	w.saucers[e].ShootCooldown = 10
 
-	SaucerAISystem(w, nil)
+	SaucerAISystem(w)
 
 	if w.saucers[e].ShootCooldown >= 10 {
 		t.Error("shoot cooldown should have decremented")
@@ -477,7 +477,7 @@ func TestSaucerAISystem_FiresAtZeroCooldown(t *testing.T) {
 	w.saucers[e].ShootCooldown = 1
 	w.saucers[e].VerticalTimer = 999 // prevent vertical change
 
-	SaucerAISystem(w, nil)
+	SaucerAISystem(w)
 
 	// A saucer bullet should have been spawned
 	if len(w.saucerBullets) != 1 {
@@ -491,7 +491,7 @@ func TestSaucerAISystem_CooldownResets(t *testing.T) {
 	w.saucers[e].ShootCooldown = 1
 	w.saucers[e].VerticalTimer = 999
 
-	SaucerAISystem(w, nil)
+	SaucerAISystem(w)
 
 	if w.saucers[e] == nil {
 		t.Fatal("saucer should still exist")
@@ -507,7 +507,7 @@ func TestSaucerAISystem_VerticalTimerChange(t *testing.T) {
 	w.saucers[e].VerticalTimer = 1
 	w.saucers[e].ShootCooldown = 999
 
-	SaucerAISystem(w, nil)
+	SaucerAISystem(w)
 
 	st := w.saucers[e]
 	if st == nil {
@@ -525,7 +525,7 @@ func TestSaucerAISystem_VerticalWrap(t *testing.T) {
 	w.saucers[e].ShootCooldown = 999
 	w.saucers[e].VerticalTimer = 999
 
-	SaucerAISystem(w, nil)
+	SaucerAISystem(w)
 
 	if w.positions[e].Y < 0 {
 		t.Error("saucer Y should have wrapped")
@@ -541,7 +541,7 @@ func TestSaucerAISystem_DespawnAtFarEdge(t *testing.T) {
 	w.saucers[e].ShootCooldown = 999
 	w.saucers[e].VerticalTimer = 999
 
-	SaucerAISystem(w, nil)
+	SaucerAISystem(w)
 
 	if w.Alive(e) {
 		t.Error("saucer should have despawned at far edge")
@@ -551,8 +551,8 @@ func TestSaucerAISystem_DespawnAtFarEdge(t *testing.T) {
 func TestSaucerAISystem_NilPlayerSafe(t *testing.T) {
 	w := NewWorld()
 	SpawnSaucer(w, SaucerSmall)
-	// Should not panic with nil player position
-	SaucerAISystem(w, nil)
+	// Should not panic with no player entity
+	SaucerAISystem(w)
 }
 
 // --------------- SaucerBulletLifetimeSystem ---------------
@@ -739,4 +739,336 @@ func TestPhysicsSystem(t *testing.T) {
 			t.Errorf("expected angle 0.1, got %v", w.rotations[e].Angle)
 		}
 	})
+}
+
+// --------------- New system tests ---------------
+
+func TestShootingSystem_SpawnsBullet(t *testing.T) {
+	w := NewWorld()
+	e := SpawnPlayer(w, 400, 300)
+	w.players[e].ShootPressed = true
+
+	ShootingSystem(w)
+
+	if w.BulletCount() != 1 {
+		t.Errorf("expected 1 bullet, got %d", w.BulletCount())
+	}
+}
+
+func TestShootingSystem_RespectsLimit(t *testing.T) {
+	w := NewWorld()
+	e := SpawnPlayer(w, 400, 300)
+	for i := 0; i < MaxPlayerBullets; i++ {
+		SpawnBullet(w, e)
+	}
+	w.players[e].ShootPressed = true
+
+	ShootingSystem(w)
+
+	if w.BulletCount() != MaxPlayerBullets {
+		t.Errorf("expected %d bullets, got %d", MaxPlayerBullets, w.BulletCount())
+	}
+}
+
+func TestSaucerSpawnSystem_TimerDecrement(t *testing.T) {
+	w := NewWorld()
+	w.SaucerActive = 0
+	w.SaucerSpawnTimer = 10
+
+	SaucerSpawnSystem(w)
+
+	if w.SaucerSpawnTimer != 9 {
+		t.Errorf("expected timer 9, got %d", w.SaucerSpawnTimer)
+	}
+}
+
+func TestSaucerSpawnSystem_SpawnsAtZero(t *testing.T) {
+	w := NewWorld()
+	w.SaucerActive = 0
+	w.SaucerSpawnTimer = 1
+
+	SaucerSpawnSystem(w)
+
+	if w.SaucerActive == 0 {
+		t.Error("saucer should have been spawned")
+	}
+	if !w.Alive(w.SaucerActive) {
+		t.Error("spawned saucer should be alive")
+	}
+}
+
+func TestSaucerSpawnSystem_NoSpawnWhileActive(t *testing.T) {
+	w := NewWorld()
+	saucer := SpawnSaucer(w, SaucerLarge)
+	w.SaucerActive = saucer
+	w.SaucerSpawnTimer = 5
+
+	SaucerSpawnSystem(w)
+
+	// Timer should not have changed
+	if w.SaucerSpawnTimer != 5 {
+		t.Errorf("timer should not tick while saucer active, got %d", w.SaucerSpawnTimer)
+	}
+}
+
+func TestSaucerDespawnSystem_DetectsDeadSaucer(t *testing.T) {
+	w := NewWorld()
+	saucer := SpawnSaucer(w, SaucerLarge)
+	w.SaucerActive = saucer
+	w.Destroy(saucer) // simulate saucer destroyed by AI despawn
+
+	SaucerDespawnSystem(w)
+
+	if w.SaucerActive != 0 {
+		t.Error("SaucerActive should be reset to 0")
+	}
+	if w.SaucerSpawnTimer != saucerRespawnDelay {
+		t.Errorf("expected spawn timer %d, got %d", saucerRespawnDelay, w.SaucerSpawnTimer)
+	}
+}
+
+func TestCollisionResponseSystem_AsteroidScore(t *testing.T) {
+	w := NewWorld()
+	w.Score = 0
+	w.NextExtraLifeAt = 10_000
+
+	asteroid := w.Spawn()
+	w.positions[asteroid] = &Position{X: 100, Y: 100}
+	w.colliders[asteroid] = &Collider{Radius: 40}
+	w.asteroids[asteroid] = &AsteroidTag{Size: SizeLarge}
+
+	bullet := w.Spawn()
+	w.positions[bullet] = &Position{X: 100, Y: 100}
+	w.bullets[bullet] = &BulletTag{Life: 10}
+
+	events := CollisionSystem(w)
+	CollisionResponseSystem(w, events)
+
+	if w.Score != 20 {
+		t.Errorf("expected score 20, got %d", w.Score)
+	}
+}
+
+func TestCollisionResponseSystem_AsteroidSplit(t *testing.T) {
+	tests := []struct {
+		name          string
+		size          AsteroidSize
+		expectedAfter int // number of asteroids after destruction
+	}{
+		{"large splits to 2 medium", SizeLarge, 2},
+		{"medium splits to 2 small", SizeMedium, 2},
+		{"small does not split", SizeSmall, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := NewWorld()
+			w.NextExtraLifeAt = 10_000
+
+			asteroid := w.Spawn()
+			w.positions[asteroid] = &Position{X: 100, Y: 100}
+			w.colliders[asteroid] = &Collider{Radius: 40}
+			w.asteroids[asteroid] = &AsteroidTag{Size: tt.size}
+
+			bullet := w.Spawn()
+			w.positions[bullet] = &Position{X: 100, Y: 100}
+			w.bullets[bullet] = &BulletTag{Life: 10}
+
+			events := CollisionSystem(w)
+			CollisionResponseSystem(w, events)
+
+			if len(w.asteroids) != tt.expectedAfter {
+				t.Errorf("expected %d asteroids after split, got %d", tt.expectedAfter, len(w.asteroids))
+			}
+		})
+	}
+}
+
+func TestCollisionResponseSystem_SaucerScore(t *testing.T) {
+	tests := []struct {
+		name     string
+		size     SaucerSize
+		expected int
+	}{
+		{"large saucer", SaucerLarge, 200},
+		{"small saucer", SaucerSmall, 1000},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := NewWorld()
+			w.Score = 0
+			w.NextExtraLifeAt = 10_000
+
+			saucer := SpawnSaucer(w, tt.size)
+			w.SaucerActive = saucer
+
+			spos := w.positions[saucer]
+			bullet := w.Spawn()
+			w.positions[bullet] = &Position{X: spos.X, Y: spos.Y}
+			w.bullets[bullet] = &BulletTag{Life: 10}
+
+			events := CollisionSystem(w)
+			CollisionResponseSystem(w, events)
+
+			if w.Score != tt.expected {
+				t.Errorf("expected score %d, got %d", tt.expected, w.Score)
+			}
+		})
+	}
+}
+
+func TestCollisionResponseSystem_PlayerDeath(t *testing.T) {
+	w := NewWorld()
+	w.Lives = 3
+	w.NextExtraLifeAt = 10_000
+
+	player := SpawnPlayer(w, 100, 100)
+	w.Player = player
+	w.players[player].Invulnerable = false
+	w.players[player].InvulnerableTimer = 0
+
+	asteroid := w.Spawn()
+	w.positions[asteroid] = &Position{X: 100, Y: 100}
+	w.colliders[asteroid] = &Collider{Radius: 40}
+	w.asteroids[asteroid] = &AsteroidTag{Size: SizeLarge}
+
+	events := CollisionSystem(w)
+	CollisionResponseSystem(w, events)
+
+	if w.Lives != 2 {
+		t.Errorf("expected 2 lives, got %d", w.Lives)
+	}
+	pos := w.positions[player]
+	if pos.X != ScreenWidth/2 || pos.Y != ScreenHeight/2 {
+		t.Errorf("expected respawn at center, got (%v,%v)", pos.X, pos.Y)
+	}
+	if !w.players[player].Invulnerable {
+		t.Error("player should be invulnerable after respawn")
+	}
+}
+
+func TestCollisionResponseSystem_PlayerDeathGameOver(t *testing.T) {
+	w := NewWorld()
+	w.Lives = 1
+	w.NextExtraLifeAt = 10_000
+
+	player := SpawnPlayer(w, 100, 100)
+	w.Player = player
+	w.players[player].Invulnerable = false
+	w.players[player].InvulnerableTimer = 0
+
+	asteroid := w.Spawn()
+	w.positions[asteroid] = &Position{X: 100, Y: 100}
+	w.colliders[asteroid] = &Collider{Radius: 40}
+	w.asteroids[asteroid] = &AsteroidTag{Size: SizeLarge}
+
+	events := CollisionSystem(w)
+	CollisionResponseSystem(w, events)
+
+	if w.Lives != 0 {
+		t.Errorf("expected 0 lives, got %d", w.Lives)
+	}
+	if w.Alive(player) {
+		t.Error("player should be destroyed on game over")
+	}
+}
+
+func TestWaveClearSystem_SpawnsNextWave(t *testing.T) {
+	w := NewWorld()
+	w.Level = 1
+	w.Player = SpawnPlayer(w, 400, 300)
+
+	WaveClearSystem(w)
+
+	if w.Level != 2 {
+		t.Errorf("expected level 2, got %d", w.Level)
+	}
+	// 3 + level 2 = 5 asteroids
+	if len(w.asteroids) != 5 {
+		t.Errorf("expected 5 asteroids, got %d", len(w.asteroids))
+	}
+}
+
+func TestWaveClearSystem_NoOpWithAsteroids(t *testing.T) {
+	w := NewWorld()
+	w.Level = 1
+	SpawnAsteroid(w, 100, 100, SizeLarge)
+
+	WaveClearSystem(w)
+
+	if w.Level != 1 {
+		t.Errorf("level should not change with asteroids present, got %d", w.Level)
+	}
+}
+
+func TestKillPlayer_Respawn(t *testing.T) {
+	w := NewWorld()
+	w.Lives = 3
+	player := SpawnPlayer(w, 100, 100)
+	w.Player = player
+	w.players[player].Invulnerable = false
+
+	killPlayer(w, player)
+
+	if w.Lives != 2 {
+		t.Errorf("expected 2 lives, got %d", w.Lives)
+	}
+	pos := w.positions[player]
+	if pos.X != ScreenWidth/2 || pos.Y != ScreenHeight/2 {
+		t.Errorf("expected respawn at center, got (%v,%v)", pos.X, pos.Y)
+	}
+	if !w.players[player].Invulnerable {
+		t.Error("player should be invulnerable after respawn")
+	}
+	if w.players[player].InvulnerableTimer != 120 {
+		t.Errorf("expected invulnerability timer 120, got %d", w.players[player].InvulnerableTimer)
+	}
+}
+
+func TestKillPlayer_GameOver(t *testing.T) {
+	w := NewWorld()
+	w.Lives = 1
+	player := SpawnPlayer(w, 100, 100)
+	w.Player = player
+
+	killPlayer(w, player)
+
+	if w.Lives != 0 {
+		t.Errorf("expected 0 lives, got %d", w.Lives)
+	}
+	if w.Alive(player) {
+		t.Error("player should be destroyed on game over")
+	}
+}
+
+func TestRespawnPlayer_Position(t *testing.T) {
+	w := NewWorld()
+	player := SpawnPlayer(w, 100, 100)
+	w.velocities[player].X = 5
+	w.velocities[player].Y = 3
+	w.rotations[player].Angle = 1.0
+	w.players[player].Invulnerable = false
+
+	respawnPlayer(w, player)
+
+	pos := w.positions[player]
+	if pos.X != ScreenWidth/2 || pos.Y != ScreenHeight/2 {
+		t.Errorf("expected center position, got (%v,%v)", pos.X, pos.Y)
+	}
+	vel := w.velocities[player]
+	if vel.X != 0 || vel.Y != 0 {
+		t.Errorf("expected zero velocity, got (%v,%v)", vel.X, vel.Y)
+	}
+	rot := w.rotations[player]
+	if rot.Angle != -math.Pi/2 {
+		t.Errorf("expected angle %v, got %v", -math.Pi/2, rot.Angle)
+	}
+	pc := w.players[player]
+	if !pc.Invulnerable {
+		t.Error("expected invulnerable")
+	}
+	if pc.InvulnerableTimer != 120 {
+		t.Errorf("expected timer 120, got %d", pc.InvulnerableTimer)
+	}
 }

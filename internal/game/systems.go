@@ -118,7 +118,13 @@ func InvulnerabilitySystem(w *World) {
 }
 
 // SaucerAISystem updates saucer behavior: shooting, vertical movement, despawn.
-func SaucerAISystem(w *World, playerPos *Position) {
+func SaucerAISystem(w *World) {
+	// Find player position
+	var playerPos *Position
+	for pe := range w.players {
+		playerPos = w.positions[pe]
+		break
+	}
 	for e, st := range w.saucers {
 		pos := w.positions[e]
 		vel := w.velocities[e]
@@ -312,4 +318,245 @@ func CollisionSystem(w *World) CollisionEvent {
 	}
 
 	return events
+}
+
+// --- Helper free functions ---
+
+// respawnPlayer resets a player entity to center with invulnerability.
+func respawnPlayer(w *World, e Entity) {
+	pos := w.positions[e]
+	pos.X, pos.Y = ScreenWidth/2, ScreenHeight/2
+	if vel := w.velocities[e]; vel != nil {
+		vel.X, vel.Y = 0, 0
+	}
+	if rot := w.rotations[e]; rot != nil {
+		rot.Angle = -math.Pi / 2
+	}
+	if pc := w.players[e]; pc != nil {
+		pc.Invulnerable = true
+		pc.InvulnerableTimer = 120
+		pc.BlinkTimer = 0
+	}
+}
+
+// killPlayer decrements lives and handles respawn or game-over cleanup.
+func killPlayer(w *World, e Entity) {
+	w.Lives--
+	destroySaucerAndBullets(w)
+	w.SaucerSpawnTimer = saucerRespawnDelay
+	if w.Lives <= 0 {
+		w.Destroy(e)
+	} else {
+		respawnPlayer(w, e)
+	}
+}
+
+// destroySaucerAndBullets removes the active saucer and all saucer bullets.
+func destroySaucerAndBullets(w *World) {
+	if w.SaucerActive != 0 && w.Alive(w.SaucerActive) {
+		w.Destroy(w.SaucerActive)
+	}
+	w.SaucerActive = 0
+	for e := range w.saucerBullets {
+		w.Destroy(e)
+	}
+}
+
+// checkExtraLife awards extra lives when score crosses 10K thresholds.
+func checkExtraLife(w *World) {
+	for w.Score >= w.NextExtraLifeAt {
+		w.Lives++
+		w.NextExtraLifeAt += 10_000
+	}
+}
+
+// spawnWave spawns a wave of large asteroids based on current level.
+func spawnWave(w *World) {
+	count := 3 + w.Level
+	playerPos := w.positions[w.Player]
+
+	for i := 0; i < count; i++ {
+		var x, y float64
+		for {
+			x = rand.Float64() * ScreenWidth
+			y = rand.Float64() * ScreenHeight
+			if playerPos != nil {
+				dx := x - playerPos.X
+				dy := y - playerPos.Y
+				if math.Sqrt(dx*dx+dy*dy) > 150 {
+					break
+				}
+			} else {
+				break
+			}
+		}
+		SpawnAsteroid(w, x, y, SizeLarge)
+	}
+}
+
+// --- New systems ---
+
+// ShootingSystem spawns bullets when the player presses shoot.
+func ShootingSystem(w *World) {
+	for e, pc := range w.players {
+		if pc.ShootPressed && w.BulletCount() < MaxPlayerBullets {
+			SpawnBullet(w, e)
+		}
+	}
+}
+
+// HyperspaceSystem handles hyperspace teleportation and risk.
+func HyperspaceSystem(w *World, rng float64) {
+	for e, pc := range w.players {
+		if !pc.HyperspacePressed || pc.HyperspaceCooldown > 0 {
+			if pc.HyperspaceCooldown > 0 {
+				pc.HyperspaceCooldown--
+			}
+			continue
+		}
+
+		pos := w.positions[e]
+		vel := w.velocities[e]
+
+		// Departure particles
+		for i := 0; i < 12; i++ {
+			SpawnParticle(w, pos.X, pos.Y)
+		}
+
+		// Risk: ~1/16 chance of death
+		if rng < 1.0/16.0 {
+			killPlayer(w, e)
+		} else {
+			// Successful teleport
+			pos.X = rand.Float64() * ScreenWidth
+			pos.Y = rand.Float64() * ScreenHeight
+			vel.X, vel.Y = 0, 0
+		}
+
+		pc.HyperspaceCooldown = 30
+	}
+}
+
+// chooseSaucerSize picks a saucer size based on score.
+// Large below 10K, small above 40K, linear interpolation between.
+func chooseSaucerSize(score int) SaucerSize {
+	if score < 10000 {
+		return SaucerLarge
+	}
+	if score >= 40000 {
+		return SaucerSmall
+	}
+	smallChance := float64(score-10000) / 30000.0
+	if rand.Float64() < smallChance {
+		return SaucerSmall
+	}
+	return SaucerLarge
+}
+
+// SaucerSpawnSystem manages the saucer spawn timer and spawns saucers.
+func SaucerSpawnSystem(w *World) {
+	if w.SaucerActive != 0 && w.Alive(w.SaucerActive) {
+		return
+	}
+	w.SaucerActive = 0
+	w.SaucerSpawnTimer--
+	if w.SaucerSpawnTimer <= 0 {
+		size := chooseSaucerSize(w.Score)
+		w.SaucerActive = SpawnSaucer(w, size)
+		w.SaucerSpawnTimer = saucerRespawnDelay
+	}
+}
+
+// SaucerDespawnSystem detects when a saucer has been destroyed by AI despawn.
+func SaucerDespawnSystem(w *World) {
+	if w.SaucerActive != 0 && !w.Alive(w.SaucerActive) {
+		w.SaucerActive = 0
+		w.SaucerSpawnTimer = saucerRespawnDelay
+	}
+}
+
+// CollisionResponseSystem processes collision events and updates game state.
+func CollisionResponseSystem(w *World, events CollisionEvent) {
+	// Process bullet hits on asteroids
+	destroyed := make(map[Entity]bool)
+	for _, hit := range events.BulletHits {
+		if destroyed[hit.Asteroid] {
+			continue
+		}
+		destroyed[hit.Asteroid] = true
+
+		ast := w.asteroids[hit.Asteroid]
+		apos := w.positions[hit.Asteroid]
+		if ast == nil || apos == nil {
+			continue
+		}
+
+		switch ast.Size {
+		case SizeLarge:
+			w.Score += 20
+		case SizeMedium:
+			w.Score += 50
+		case SizeSmall:
+			w.Score += 100
+		}
+		checkExtraLife(w)
+
+		for i := 0; i < 8; i++ {
+			SpawnParticle(w, apos.X, apos.Y)
+		}
+
+		if ast.Size != SizeSmall {
+			nextSize := ast.Size + 1
+			SpawnAsteroid(w, apos.X, apos.Y, nextSize)
+			SpawnAsteroid(w, apos.X, apos.Y, nextSize)
+		}
+
+		w.Destroy(hit.Bullet)
+		w.Destroy(hit.Asteroid)
+	}
+
+	// Process bullet hits on saucers
+	for _, hit := range events.SaucerBulletHits {
+		st := w.saucers[hit.Saucer]
+		spos := w.positions[hit.Saucer]
+		if st == nil || spos == nil {
+			continue
+		}
+
+		switch st.Size {
+		case SaucerLarge:
+			w.Score += 200
+		case SaucerSmall:
+			w.Score += 1000
+		}
+		checkExtraLife(w)
+
+		for i := 0; i < 12; i++ {
+			SpawnParticle(w, spos.X, spos.Y)
+		}
+
+		w.Destroy(hit.Bullet)
+		w.Destroy(hit.Saucer)
+		w.SaucerActive = 0
+		w.SaucerSpawnTimer = saucerRespawnDelay
+	}
+
+	// Process player hit
+	if events.PlayerHit {
+		ppos := w.positions[events.PlayerEntity]
+		if ppos != nil {
+			for i := 0; i < 15; i++ {
+				SpawnParticle(w, ppos.X, ppos.Y)
+			}
+		}
+		killPlayer(w, events.PlayerEntity)
+	}
+}
+
+// WaveClearSystem spawns the next wave when all asteroids are destroyed.
+func WaveClearSystem(w *World) {
+	if len(w.asteroids) == 0 {
+		w.Level++
+		spawnWave(w)
+	}
 }

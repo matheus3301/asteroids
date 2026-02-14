@@ -15,14 +15,14 @@ func TestMenuSelect_StartGame(t *testing.T) {
 	if g.world == nil {
 		t.Fatal("world should be initialized after starting game")
 	}
-	if !g.world.Alive(g.player) {
+	if !g.world.Alive(g.world.Player) {
 		t.Error("player should be alive")
 	}
-	if g.lives != 3 {
-		t.Errorf("expected 3 lives, got %d", g.lives)
+	if g.world.Lives != 3 {
+		t.Errorf("expected 3 lives, got %d", g.world.Lives)
 	}
-	if g.score != 0 {
-		t.Errorf("expected score 0, got %d", g.score)
+	if g.world.Score != 0 {
+		t.Errorf("expected score 0, got %d", g.world.Score)
 	}
 }
 
@@ -85,23 +85,23 @@ func TestPauseSelect_QuitToMenu(t *testing.T) {
 
 func TestPause_PreservesGameState(t *testing.T) {
 	g := newPlaying()
-	g.score = 500
-	g.lives = 2
-	g.level = 3
+	g.world.Score = 500
+	g.world.Lives = 2
+	g.world.Level = 3
 
 	// Pause
 	g.state = statePaused
 	g.pauseCursor = 0
 
 	// Verify game state is preserved
-	if g.score != 500 {
-		t.Errorf("score should be preserved, got %d", g.score)
+	if g.world.Score != 500 {
+		t.Errorf("score should be preserved, got %d", g.world.Score)
 	}
-	if g.lives != 2 {
-		t.Errorf("lives should be preserved, got %d", g.lives)
+	if g.world.Lives != 2 {
+		t.Errorf("lives should be preserved, got %d", g.world.Lives)
 	}
-	if g.level != 3 {
-		t.Errorf("level should be preserved, got %d", g.level)
+	if g.world.Level != 3 {
+		t.Errorf("level should be preserved, got %d", g.world.Level)
 	}
 	if g.world == nil {
 		t.Error("world should still exist while paused")
@@ -112,16 +112,16 @@ func TestPause_PreservesGameState(t *testing.T) {
 	if g.state != statePlaying {
 		t.Errorf("expected statePlaying after resume, got %v", g.state)
 	}
-	if g.score != 500 || g.lives != 2 || g.level != 3 {
+	if g.world.Score != 500 || g.world.Lives != 2 || g.world.Level != 3 {
 		t.Error("game state should be unchanged after resume")
 	}
 }
 
 func TestPauseToMenu_ThenStartNewGame(t *testing.T) {
 	g := newPlaying()
-	g.score = 999
-	g.lives = 1
-	g.level = 5
+	g.world.Score = 999
+	g.world.Lives = 1
+	g.world.Level = 5
 
 	// Pause → Quit to Menu
 	g.state = statePaused
@@ -136,14 +136,14 @@ func TestPauseToMenu_ThenStartNewGame(t *testing.T) {
 	g.menuCursor = 0
 	g.menuSelect()
 
-	if g.score != 0 {
-		t.Errorf("new game should reset score, got %d", g.score)
+	if g.world.Score != 0 {
+		t.Errorf("new game should reset score, got %d", g.world.Score)
 	}
-	if g.lives != 3 {
-		t.Errorf("new game should reset lives, got %d", g.lives)
+	if g.world.Lives != 3 {
+		t.Errorf("new game should reset lives, got %d", g.world.Lives)
 	}
-	if g.level != 1 {
-		t.Errorf("new game should reset level, got %d", g.level)
+	if g.world.Level != 1 {
+		t.Errorf("new game should reset level, got %d", g.world.Level)
 	}
 }
 
@@ -308,7 +308,7 @@ func TestFullFlow_MenuToPlayToPauseToMenuToPlay(t *testing.T) {
 	if g.state != statePlaying {
 		t.Fatalf("expected statePlaying on second start, got %v", g.state)
 	}
-	if g.score != 0 || g.lives != 3 || g.level != 1 {
+	if g.world.Score != 0 || g.world.Lives != 3 || g.world.Level != 1 {
 		t.Error("new game should have fresh state")
 	}
 }
