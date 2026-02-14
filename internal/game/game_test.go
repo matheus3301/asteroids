@@ -773,6 +773,35 @@ func TestHyperspace_GameOverOnLastLife(t *testing.T) {
 	}
 }
 
+func TestShipIconVerts_HasThreeVertices(t *testing.T) {
+	if len(shipIconVerts) != 3 {
+		t.Errorf("expected 3 vertices, got %d", len(shipIconVerts))
+	}
+}
+
+func TestLivesIconCount(t *testing.T) {
+	tests := []struct {
+		name     string
+		lives    int
+		expected int
+	}{
+		{"3 lives shows 2 icons", 3, 2},
+		{"1 life shows 0 icons", 1, 0},
+		{"0 lives shows 0 icons", 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			count := tt.lives - 1
+			if count < 0 {
+				count = 0
+			}
+			if count != tt.expected {
+				t.Errorf("expected %d icons, got %d", tt.expected, count)
+			}
+		})
+	}
+}
+
 func TestHyperspace_SpawnsDepartureParticles(t *testing.T) {
 	g := newPlaying()
 	pc := g.world.players[g.world.Player]

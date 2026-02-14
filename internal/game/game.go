@@ -3,6 +3,7 @@ package game
 import (
 	"fmt"
 	"image/color"
+	"math"
 	"math/rand"
 
 	"github.com/hajimehoshi/ebiten/v2"
@@ -15,7 +16,15 @@ const (
 
 	saucerInitialDelay = 600
 	saucerRespawnDelay = 600
+
+	hudIconScale = 0.52
 )
+
+var shipIconVerts = [][2]float64{
+	{playerRadius * hudIconScale, 0},
+	{-playerRadius * 0.8 * hudIconScale, -playerRadius * 0.6 * hudIconScale},
+	{-playerRadius * 0.8 * hudIconScale, playerRadius * 0.6 * hudIconScale},
+}
 
 type state int
 
@@ -112,9 +121,25 @@ func (g *Game) updatePlaying() {
 func (g *Game) drawHUD(screen *ebiten.Image) {
 	hudScale := 2.0
 	hudColor := color.RGBA{255, 255, 255, 255}
+
 	DrawText(screen, fmt.Sprintf("SCORE: %d", g.world.Score), 10, 10, hudScale, hudColor)
-	DrawText(screen, fmt.Sprintf("LIVES: %d", g.world.Lives), 10, 28, hudScale, hudColor)
-	DrawText(screen, fmt.Sprintf("LEVEL: %d", g.world.Level), 10, 46, hudScale, hudColor)
+
+	// Lives as "LIVES:" label followed by ship icons, aligned with numbers
+	livesLabel := "LIVES: "
+	DrawText(screen, livesLabel, 10, 32, hudScale, hudColor)
+	iconWing := playerRadius * 0.6 * hudIconScale
+	iconStartX := 10.0 + TextWidth(livesLabel, hudScale) + iconWing
+	iconY := 32.0 + 7.0*hudScale/2 // vertically center with text
+	count := g.world.Lives - 1
+	if count < 0 {
+		count = 0
+	}
+	for i := 0; i < count; i++ {
+		iconX := iconStartX + float64(i)*(iconWing*2+6)
+		drawPolygon(screen, &Position{X: iconX, Y: iconY}, -math.Pi/2, shipIconVerts, hudColor)
+	}
+
+	DrawText(screen, fmt.Sprintf("LEVEL: %d", g.world.Level), 10, 54, hudScale, hudColor)
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
