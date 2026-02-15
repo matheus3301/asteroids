@@ -47,6 +47,8 @@ type Game struct {
 	pauseCursor    int
 	settings       settings
 	quit           bool
+
+	aiAgent AIAgent // optional AI controller; if set, replaces keyboard input
 }
 
 func New() *Game {
@@ -55,6 +57,12 @@ func New() *Game {
 	}
 	g.settings.volume = 10
 	return g
+}
+
+// SetAIAgent assigns an AI agent to control the player.
+// When set, InputSystem is replaced by AIInputSystem and the game auto-starts.
+func (g *Game) SetAIAgent(agent AIAgent) {
+	g.aiAgent = agent
 }
 
 func (g *Game) ensureSound() {
@@ -87,6 +95,10 @@ func (g *Game) Update() error {
 	}
 	switch g.state {
 	case stateMenu:
+		if g.aiAgent != nil {
+			g.reset()
+			return nil
+		}
 		g.updateMenu()
 	case stateSettings:
 		g.updateSettings()
@@ -112,7 +124,13 @@ func (g *Game) updatePlaying() {
 	}
 	w := g.world
 
-	InputSystem(w)
+	if g.aiAgent != nil {
+		obs := ExtractObservation(w)
+		action := g.aiAgent.Act(obs)
+		AIInputSystem(w, action)
+	} else {
+		InputSystem(w)
+	}
 	PhysicsSystem(w)
 	WrapSystem(w)
 	InvulnerabilitySystem(w)

@@ -1,0 +1,796 @@
+# Sound Effects -- Implementation Spec
+
+## Overview
+
+This spec covers adding authentic 1979-style sound effects to the Asteroids game using procedural tone generation via Ebitengine's `audio` package. All sounds are synthesized at runtime from math -- no embedded audio assets required. This matches the original arcade hardware, which used discrete analog circuits to generate every sound.
+
+---
+
+## Table of Contents
+
+1. [Sound Inventory](#1-sound-inventory)
+2. [Approach: Procedural Generation vs. Embedded Assets](#2-approach-procedural-generation-vs-embedded-assets)
+3. [How Ebitengine Audio Works](#3-how-ebitengine-audio-works)
+4. [Sound Manager Design](#4-sound-manager-design)
+5. [Procedural Waveform Generation](#5-procedural-waveform-generation)
+6. [Trigger Points in the Game Loop](#6-trigger-points-in-the-game-loop)
+7. [Handling Concurrent and Looping Sounds](#7-handling-concurrent-and-looping-sounds)
+8. [Volume Control](#8-volume-control)
+9. [Integration with Game Struct](#9-integration-with-game-struct)
+10. [File Layout](#10-file-layout)
+11. [Test Considerations](#11-test-considerations)
+12. [Implementation Order](#12-implementation-order)
+
+---
+
+## 1. Sound Inventory
+
+| Sound | Style | Duration | Trigger |
+|---|---|---|---|
+| **Fire (pew)** | Short high-frequency descending sweep | ~80ms | Bullet spawned |
+| **Asteroid explosion** | White noise burst with pitch varying by asteroid size | ~200-400ms | Asteroid destroyed by bullet |
+| **Player death explosion** | Long low-frequency noise burst + rumble | ~800ms | Player-asteroid collision |
+| **Thrust** | Low filtered noise, looping | Continuous while key held | `pc.Thrusting == true` |
+| **Heartbeat/bass pulse** | Two alternating low-frequency tones (thump-thump), tempo accelerates | Continuous during play | Every frame; tempo derived from asteroid count |
+| **Saucer drone** | Warbling sine wave, two alternating frequencies | Continuous while saucer alive | Not yet applicable (no UFO entity exists in the codebase) |
+
+---
+
+## 2. Approach: Procedural Generation vs. Embedded Assets
+
+**Recommendation: Procedural tone generation.**
+
+Rationale:
+- The original 1979 Asteroids hardware generated every sound from analog oscillator circuits. Procedural synthesis is the authentic recreation.
+- Zero external dependencies -- no `.wav` or `.ogg` files to manage, embed, or license.
+- Consistent with the codebase philosophy: the font rendering (`font.go`) is already procedural line segments rather than a font file. Sound should follow the same pattern.
+- Ebitengine's `audio` package provides everything needed. The `io.Reader` interface is the integration point: any struct that implements `Read([]byte) (int, error)` can stream PCM samples directly to the audio context.
+- File size stays minimal. The entire game remains a single binary.
+
+The alternative -- embedding `.wav` files via `go:embed` -- is simpler to implement but sacrifices the retro authenticity and adds binary bloat. If someone later wants to swap in recorded samples, the `SoundManager` API would remain identical; only the `io.Reader` backing each sound would change.
+
+---
+
+## 3. How Ebitengine Audio Works
+
+### Core concepts
+
+**`audio.Context`** -- Singleton per application. Created once with a sample rate (e.g., 44100 Hz). All audio players are derived from it. Must be created on the main goroutine (i.e., during `Game.Update()` or earlier, not in a goroutine). Create it in `New()` or lazily on first `Update()`.
+
+```go
+import "github.com/hajimehoshi/ebiten/v2/audio"
+
+const sampleRate = 44100
+
+audioCtx := audio.NewContext(sampleRate)
+```
+
+**`audio.Player`** -- Wraps an `io.Reader` that produces signed 16-bit stereo PCM at the context's sample rate. One sample frame = 4 bytes (2 bytes left + 2 bytes right). Created via `audioCtx.NewPlayer(reader)`.
+
+For this project, use `audioCtx.NewPlayer(reader)` with signed 16-bit little-endian stereo PCM -- the standard and most widely documented path in Ebitengine v2.
+
+**`audio.InfiniteLoop`** -- Wraps a finite `io.ReadSeeker` into an infinite looping reader. Used for the thrust and heartbeat sounds.
+
+**Playback control:**
+```go
+player.Play()              // start / resume
+player.Pause()             // pause without resetting
+player.Rewind()            // seek to beginning
+player.IsPlaying() bool    // check state
+player.SetVolume(float64)  // 0.0 to 1.0
+```
+
+### Sample math
+
+At 44100 Hz stereo 16-bit:
+- 1 second of audio = 44100 frames x 4 bytes/frame = 176,400 bytes
+- An 80ms "pew" sound = ~3528 frames = ~14,112 bytes
+- These are tiny. Pre-generating full buffers in memory is fine for one-shot sounds.
+
+---
+
+## 4. Sound Manager Design
+
+A new `SoundManager` struct, stored as a field on `Game`. Not standalone -- it needs the `audio.Context` which is tied to the application lifecycle, and the game loop drives it every tick.
+
+```go
+// internal/game/sound.go
+
+type SoundManager struct {
+    ctx *audio.Context
+
+    // One-shot sounds (pre-generated byte buffers)
+    fireBuf           []byte
+    explosionSmallBuf []byte
+    explosionMedBuf   []byte
+    explosionLargeBuf []byte
+    deathBuf          []byte
+
+    // Looping sounds (persistent players)
+    thrustPlayer    *audio.Player
+    thrustPlaying   bool
+
+    // Heartbeat state
+    beatLowBuf      []byte
+    beatHighBuf     []byte
+    beatHigh        bool      // alternates between low and high thump
+    beatTimer       int       // ticks until next beat
+    beatInterval    int       // current interval in ticks
+
+    // Master volume
+    masterVolume    float64   // 0.0 - 1.0, default 1.0
+}
+```
+
+### Why on Game, not standalone
+
+- `SoundManager` must be initialized after `audio.Context` exists, which requires the Ebitengine runtime to be active.
+- The game loop calls `sm.Update()` every tick for looping/heartbeat logic.
+- The game's state transitions (`statePaused`, `stateGameOver`, `stateMenu`) need to pause/stop looping sounds. This is cleanest when `Game` owns the manager.
+
+### Lifecycle
+
+```
+New()           -> Game created, SoundManager is nil
+reset()         -> SoundManager initialized (lazy; audio.Context created once)
+updatePlaying() -> sm.UpdateBeat() called every tick; one-shot triggers called at event points
+state changes   -> sm.StopAll() or sm.PauseAll() as appropriate
+```
+
+---
+
+## 5. Procedural Waveform Generation
+
+All waveform generators produce `[]byte` in signed 16-bit little-endian stereo PCM format. These live in `sound_gen.go` and have no Ebitengine imports -- pure math.
+
+### 5.1 Fire ("pew")
+
+A **descending frequency sweep** from ~1000 Hz to ~200 Hz over ~80ms, sine wave, with a linear amplitude envelope that fades to zero.
+
+```go
+func generateFire(sampleRate int) []byte {
+    duration := 0.08 // seconds
+    samples := int(float64(sampleRate) * duration)
+    buf := make([]byte, samples*4)
+
+    startFreq := 1000.0
+    endFreq := 200.0
+    phase := 0.0
+
+    for i := 0; i < samples; i++ {
+        t := float64(i) / float64(samples)         // 0..1 progress
+        freq := startFreq + (endFreq-startFreq)*t   // linear sweep down
+        phase += 2 * math.Pi * freq / float64(sampleRate)
+        amplitude := (1.0 - t) * 0.4                // linear fade, 0.4 mix level
+        sample := math.Sin(phase) * amplitude
+        val := int16(sample * 32767)
+        // Write stereo (L + R identical)
+        binary.LittleEndian.PutUint16(buf[i*4:], uint16(val))
+        binary.LittleEndian.PutUint16(buf[i*4+2:], uint16(val))
+    }
+    return buf
+}
+```
+
+Phase is accumulated incrementally to ensure continuity across the frequency sweep.
+
+### 5.2 Asteroid Explosion
+
+**White noise burst** with exponential amplitude decay, duration and low-frequency content scaled by asteroid size.
+
+| Size | Duration | Low-freq mix | Character |
+|---|---|---|---|
+| Large | 400ms | 0.6 | Deep boom |
+| Medium | 250ms | 0.3 | Medium crunch |
+| Small | 150ms | 0.1 | Sharp pop |
+
+```go
+func generateExplosion(sampleRate int, size AsteroidSize) []byte {
+    var duration, lowMix float64
+    switch size {
+    case SizeLarge:
+        duration, lowMix = 0.4, 0.6
+    case SizeMedium:
+        duration, lowMix = 0.25, 0.3
+    case SizeSmall:
+        duration, lowMix = 0.15, 0.1
+    }
+
+    samples := int(float64(sampleRate) * duration)
+    buf := make([]byte, samples*4)
+
+    for i := 0; i < samples; i++ {
+        t := float64(i) / float64(samples)
+        envelope := math.Exp(-t * 6.0)
+        noise := (rand.Float64()*2 - 1) * envelope * 0.5
+        low := math.Sin(2*math.Pi*60*float64(i)/float64(sampleRate)) * envelope * lowMix
+        sample := clampF(noise+low, -1, 1)
+        val := int16(sample * 32767)
+        binary.LittleEndian.PutUint16(buf[i*4:], uint16(val))
+        binary.LittleEndian.PutUint16(buf[i*4+2:], uint16(val))
+    }
+    return buf
+}
+
+func clampF(v, min, max float64) float64 {
+    if v < min { return min }
+    if v > max { return max }
+    return v
+}
+```
+
+### 5.3 Player Death Explosion
+
+Same concept as large asteroid explosion but **longer (800ms)**, with a **lower frequency rumble** (40 Hz sine) and heavier noise. This is the most dramatic sound in the game.
+
+```go
+func generateDeath(sampleRate int) []byte {
+    duration := 0.8
+    samples := int(float64(sampleRate) * duration)
+    buf := make([]byte, samples*4)
+
+    for i := 0; i < samples; i++ {
+        t := float64(i) / float64(samples)
+        envelope := math.Exp(-t * 3.0)
+        noise := (rand.Float64()*2 - 1) * envelope * 0.5
+        rumble := math.Sin(2*math.Pi*40*float64(i)/float64(sampleRate)) * envelope * 0.5
+        sample := clampF(noise+rumble, -1, 1)
+        val := int16(sample * 32767)
+        binary.LittleEndian.PutUint16(buf[i*4:], uint16(val))
+        binary.LittleEndian.PutUint16(buf[i*4+2:], uint16(val))
+    }
+    return buf
+}
+```
+
+### 5.4 Thrust (Looping)
+
+**Low-pass filtered white noise**, generated as a short loopable buffer (~200ms) wrapped in `audio.InfiniteLoop`.
+
+```go
+func generateThrustLoop(sampleRate int) []byte {
+    duration := 0.2
+    samples := int(float64(sampleRate) * duration)
+    buf := make([]byte, samples*4)
+
+    prevSample := 0.0
+    alpha := 0.15 // low-pass filter coefficient; lower = more filtered/muffled
+
+    for i := 0; i < samples; i++ {
+        raw := rand.Float64()*2 - 1
+        prevSample = prevSample + alpha*(raw-prevSample)
+        sample := prevSample * 0.3
+        val := int16(sample * 32767)
+        binary.LittleEndian.PutUint16(buf[i*4:], uint16(val))
+        binary.LittleEndian.PutUint16(buf[i*4+2:], uint16(val))
+    }
+    return buf
+}
+```
+
+To loop it, wrap in `audio.InfiniteLoop` using `bytes.NewReader` (which implements `io.ReadSeeker`):
+
+```go
+thrustBytes := generateThrustLoop(sampleRate)
+looper := audio.NewInfiniteLoop(bytes.NewReader(thrustBytes), int64(len(thrustBytes)))
+sm.thrustPlayer, _ = sm.ctx.NewPlayer(looper)
+```
+
+### 5.5 Heartbeat / Bass Pulse
+
+The original Asteroids alternates two bass thumps -- a lower tone (~55 Hz) and a slightly higher tone (~70 Hz). Each thump is a short sine burst (~60ms) with exponential decay.
+
+```go
+func generateBeatTone(sampleRate int, freq float64) []byte {
+    duration := 0.06
+    samples := int(float64(sampleRate) * duration)
+    buf := make([]byte, samples*4)
+
+    for i := 0; i < samples; i++ {
+        t := float64(i) / float64(samples)
+        envelope := math.Exp(-t * 8.0)
+        sample := math.Sin(2*math.Pi*freq*float64(i)/float64(sampleRate)) * envelope * 0.6
+        val := int16(sample * 32767)
+        binary.LittleEndian.PutUint16(buf[i*4:], uint16(val))
+        binary.LittleEndian.PutUint16(buf[i*4+2:], uint16(val))
+    }
+    return buf
+}
+```
+
+Pre-generate both at init:
+```go
+sm.beatLowBuf = generateBeatTone(sampleRate, 55.0)
+sm.beatHighBuf = generateBeatTone(sampleRate, 70.0)
+```
+
+Tempo mapping (ticks at 60 TPS):
+
+```go
+func beatIntervalFromAsteroidCount(count int) int {
+    // >= 12 asteroids -> 60 ticks (1 beat/sec, slow)
+    // 1 asteroid      -> 15 ticks (4 beats/sec, frantic)
+    if count <= 0 {
+        return 15
+    }
+    interval := 15 + count*4
+    if interval > 60 {
+        interval = 60
+    }
+    return interval
+}
+```
+
+---
+
+## 6. Trigger Points in the Game Loop
+
+Below is an annotated walkthrough of `updatePlaying()` in `game.go` showing exactly where each sound triggers. Line references are to the current source.
+
+### 6.1 Fire sound -- bullet spawn
+
+**File:** `internal/game/game.go`, lines 122-124
+**Current code:**
+```go
+if pc, ok := w.players[g.player]; ok && pc.ShootPressed {
+    SpawnBullet(w, g.player)
+}
+```
+**Change:** Add fire sound after bullet spawn:
+```go
+if pc, ok := w.players[g.player]; ok && pc.ShootPressed {
+    SpawnBullet(w, g.player)
+    g.sound.PlayFire()
+}
+```
+
+### 6.2 Asteroid explosion -- asteroid destroyed by bullet
+
+**File:** `internal/game/game.go`, lines 131-167 (inside `for _, hit := range events.BulletHits` loop)
+**Current code performs:** scoring, particle spawn, split, destroy.
+**Change:** Add explosion sound after scoring, before particles:
+```go
+// Score
+switch ast.Size { ... }
+
+// Sound
+g.sound.PlayExplosion(ast.Size)
+
+// Particles
+for i := 0; i < 8; i++ {
+    SpawnParticle(w, apos.X, apos.Y)
+}
+```
+
+### 6.3 Player death explosion -- player hit by asteroid
+
+**File:** `internal/game/game.go`, lines 170-201 (inside `if events.PlayerHit` block)
+**Change:** Play death sound and stop thrust at the top of the block:
+```go
+if events.PlayerHit {
+    g.sound.PlayDeath()
+    g.sound.StopThrust()
+    g.lives--
+    // ... rest of existing logic
+}
+```
+
+### 6.4 Thrust -- continuous while thrusting
+
+**File:** `internal/game/game.go`, after `InputSystem(w)` call (line 115)
+**Rationale:** Do NOT put sound triggers inside `InputSystem` itself -- systems should remain pure data transforms. Check thrust state in `updatePlaying()` instead.
+**Change:** Add after `InputSystem(w)`:
+```go
+InputSystem(w)
+
+// Thrust sound
+if pc, ok := w.players[g.player]; ok {
+    if pc.Thrusting {
+        g.sound.StartThrust()
+    } else {
+        g.sound.StopThrust()
+    }
+}
+```
+
+`StartThrust()` is idempotent -- if already playing, it returns immediately. `StopThrust()` pauses and rewinds.
+
+### 6.5 Heartbeat -- every tick, tempo tied to asteroid count
+
+**File:** `internal/game/game.go`, after collision processing and before the wave-cleared check (before line 204)
+**Change:**
+```go
+// Heartbeat
+g.sound.UpdateBeat(len(w.asteroids))
+
+// Check if wave cleared
+if len(w.asteroids) == 0 {
+```
+
+The `UpdateBeat` method internally:
+1. Recomputes `beatInterval` from the current asteroid count.
+2. Decrements `beatTimer`.
+3. When timer hits 0, plays the next beat tone (alternating low/high), resets timer.
+
+### 6.6 Saucer drone -- future
+
+No UFO/saucer entity exists in the current ECS. The `SoundManager` should define `StartSaucer()` / `StopSaucer()` stubs that do nothing. When a saucer entity is added, the pattern mirrors thrust: check saucer-alive in `updatePlaying()`, start/stop accordingly.
+
+### 6.7 State transition hooks
+
+Looping sounds (thrust, heartbeat) must respond to state changes:
+
+| Transition | Where in code | Action |
+|---|---|---|
+| Playing -> Paused | `updatePlaying()`, lines 106-110 (Escape pressed) | `g.sound.PauseAll()` |
+| Paused -> Playing | `updatePaused()`, Escape or Resume selected | `g.sound.ResumeAll()` |
+| Playing -> GameOver | `updatePlaying()`, line 179 (`g.lives <= 0`) | `g.sound.StopAll()` |
+| GameOver -> Menu | `Update()`, line 99 (Enter pressed) | No action (already stopped) |
+| Menu -> Playing | `reset()` | `g.sound.Reset()` reinitializes heartbeat timer |
+| Paused -> Menu | `pauseSelect()`, Quit to Menu | `g.sound.StopAll()` |
+
+**Specific changes to existing code:**
+
+In `updatePlaying()`, before the existing `return` on pause:
+```go
+if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+    g.sound.PauseAll()
+    g.state = statePaused
+    g.pauseCursor = 0
+    return
+}
+```
+
+In `updatePaused()`, when resuming:
+```go
+case 0: // Resume
+    g.state = statePlaying
+    g.sound.ResumeAll()
+```
+
+In `updatePaused()`, when quitting to menu:
+```go
+case 1: // Quit to Menu
+    g.sound.StopAll()
+    g.state = stateMenu
+```
+
+In `updatePlaying()`, on game over:
+```go
+if g.lives <= 0 {
+    g.sound.StopAll()
+    g.state = stateGameOver
+    w.Destroy(g.player)
+}
+```
+
+---
+
+## 7. Handling Concurrent and Looping Sounds
+
+### One-shot concurrency
+
+Multiple one-shot sounds can play simultaneously (e.g., two asteroids destroyed in the same frame, or fire + explosion). Each call to `PlayFire()` or `PlayExplosion()` creates a **new** `audio.Player` from the pre-generated byte buffer:
+
+```go
+func (sm *SoundManager) PlayFire() {
+    if sm == nil { return }
+    p, err := sm.ctx.NewPlayer(bytes.NewReader(sm.fireBuf))
+    if err != nil { return }
+    p.SetVolume(sm.masterVolume)
+    p.Play()
+    // Player is GC'd after playback completes; no need to track it.
+}
+```
+
+**GC consideration:** `audio.Player` is automatically garbage-collected after it finishes playing and has no remaining references. Creating short-lived players per sound event is the idiomatic Ebitengine pattern. In the worst case (rapid fire + many explosions), roughly 10 players might exist in one frame. This is well within Ebitengine's audio mixer capacity.
+
+### Looping sounds
+
+Thrust and heartbeat use **persistent** `audio.Player` instances stored on `SoundManager`. They are created once during initialization and reused:
+
+- **Thrust:** `Play()` / `Pause()` + `Rewind()` as the player starts/stops thrusting.
+- **Heartbeat:** Play each beat as a one-shot from the pre-generated buffer. Since the beat interval is always longer than the tone duration (60ms = ~4 ticks at 60 TPS, minimum interval is 15 ticks), a fresh one-shot player per beat is fine. This avoids the complexity of persistent beat players.
+
+### Preventing sound spam
+
+For the fire sound: The game already rate-limits via `inpututil.IsKeyJustPressed` -- only one bullet per key press. No additional debouncing is needed.
+
+For explosions: Multiple asteroids can be destroyed in one frame (bullet hits one asteroid, possibly more via the hit loop). Overlapping explosion sounds in a single frame is correct -- it is faithful to the original.
+
+---
+
+## 8. Volume Control
+
+### Settings integration
+
+Add a `masterVolume` field to the existing `settings` struct in `internal/game/settings.go`:
+
+```go
+type settings struct {
+    resolutionIndex int
+    fullscreen      bool
+    masterVolume    int  // 0-10, displayed as 0%-100%, default 10
+}
+```
+
+Add a "VOLUME" row to the settings menu in `internal/game/menu.go`, between the existing "FULLSCREEN" row and "BACK":
+
+```go
+var settingsLabels = []string{
+    "RESOLUTION",
+    "FULLSCREEN",
+    "VOLUME",
+    "BACK",
+}
+```
+
+Left/right arrows adjust `masterVolume` by 1 step (clamped 0-10). Display as `VOLUME: 70%`. Update `settingsLeft()`, `settingsRight()`, `settingsSelect()`, and `drawSettings()` accordingly. The index for "BACK" shifts from 2 to 3.
+
+The settings value maps to `SoundManager.masterVolume` as `float64(s.masterVolume) / 10.0`. Call `g.sound.SetMasterVolume()` when the setting changes, which updates the volume on the persistent thrust player and applies to future one-shot players.
+
+### Mute on pause
+
+When paused, `PauseAll()` pauses all active players. Volume is not zeroed -- actual `Pause()` calls are used so playback position is preserved for the thrust sound.
+
+---
+
+## 9. Integration with Game Struct
+
+### Modified Game struct
+
+```go
+type Game struct {
+    world  *World
+    state  state
+    score  int
+    lives  int
+    level  int
+    player Entity
+
+    menuCursor     int
+    settingsCursor int
+    pauseCursor    int
+    settings       settings
+    quit           bool
+
+    sound *SoundManager  // NEW
+}
+```
+
+### Initialization
+
+The `SoundManager` is lazily initialized because `audio.NewContext` works best once the Ebitengine main loop is running. Initialize it in `reset()`:
+
+```go
+func (g *Game) reset() {
+    if g.sound == nil {
+        g.sound = NewSoundManager()
+    }
+    g.sound.Reset()
+    g.world = NewWorld()
+    // ... rest of existing reset code
+}
+```
+
+`NewSoundManager()` creates the `audio.Context` (Ebitengine only allows one per application), pre-generates all waveform buffers, and creates the persistent thrust loop player.
+
+### Nil-receiver safety
+
+Since `g.sound` is nil before the first game start (during menu state), all `SoundManager` methods must be nil-receiver safe:
+
+```go
+func (sm *SoundManager) PlayFire() {
+    if sm == nil { return }
+    // ...
+}
+
+func (sm *SoundManager) PlayExplosion(size AsteroidSize) {
+    if sm == nil { return }
+    // ...
+}
+
+func (sm *SoundManager) PlayDeath() {
+    if sm == nil { return }
+    // ...
+}
+
+func (sm *SoundManager) StartThrust() {
+    if sm == nil { return }
+    // ...
+}
+
+// ... same pattern for all public methods
+```
+
+This keeps call sites in `updatePlaying()` clean -- no `if g.sound != nil` guards needed at every trigger point.
+
+---
+
+## 10. File Layout
+
+```
+internal/game/
+    sound.go          // SoundManager struct, NewSoundManager(), all Play/Start/Stop/Update methods
+    sound_gen.go      // Waveform generation functions (generateFire, generateExplosion, etc.)
+    sound_test.go     // Tests for waveform generation and SoundManager logic
+```
+
+**`sound.go`** imports `github.com/hajimehoshi/ebiten/v2/audio`. This is the only new Ebitengine sub-package import -- it is already bundled with the `ebiten/v2` module in `go.mod`, so no new `go get` is required.
+
+**`sound_gen.go`** is pure `math` + `math/rand` + `encoding/binary`. No Ebitengine imports. This makes all waveform generators fully testable without a graphics context.
+
+---
+
+## 11. Test Considerations
+
+### What can be tested without the Ebitengine runtime
+
+The waveform generators (`sound_gen.go`) are pure functions returning `[]byte`. Test them thoroughly:
+
+**1. Buffer length correctness:**
+```go
+func TestGenerateFire_BufferLength(t *testing.T) {
+    buf := generateFire(44100)
+    expectedSamples := int(0.08 * 44100)
+    if len(buf) != expectedSamples*4 {
+        t.Errorf("expected %d bytes, got %d", expectedSamples*4, len(buf))
+    }
+}
+```
+
+**2. Sample range validation:** Iterate all samples, decode int16 values, assert they fall within `[-32767, 32767]`:
+```go
+func TestGenerateFire_SamplesInRange(t *testing.T) {
+    buf := generateFire(44100)
+    for i := 0; i < len(buf); i += 4 {
+        left := int16(binary.LittleEndian.Uint16(buf[i:]))
+        right := int16(binary.LittleEndian.Uint16(buf[i+2:]))
+        if left < -32767 || left > 32767 || right < -32767 || right > 32767 {
+            t.Fatalf("sample out of range at byte offset %d: L=%d R=%d", i, left, right)
+        }
+    }
+}
+```
+
+**3. Non-silence:** Assert that at least some samples have absolute value above a threshold, confirming audible output:
+```go
+func TestGenerateFire_NotSilent(t *testing.T) {
+    buf := generateFire(44100)
+    hasSound := false
+    for i := 0; i < len(buf); i += 4 {
+        val := int16(binary.LittleEndian.Uint16(buf[i:]))
+        if val > 100 || val < -100 {
+            hasSound = true
+            break
+        }
+    }
+    if !hasSound {
+        t.Error("fire sound appears to be silent")
+    }
+}
+```
+
+**4. Envelope decay:** For explosion and death sounds, verify that average amplitude in the first 10% of samples exceeds the last 10%.
+
+**5. Size ordering:** Large explosion buffer should be longer than medium, which should be longer than small:
+```go
+func TestGenerateExplosion_LargerAsteroidLongerSound(t *testing.T) {
+    large := generateExplosion(44100, SizeLarge)
+    med := generateExplosion(44100, SizeMedium)
+    small := generateExplosion(44100, SizeSmall)
+    if len(large) <= len(med) || len(med) <= len(small) {
+        t.Errorf("expected large > med > small, got %d, %d, %d",
+            len(large), len(med), len(small))
+    }
+}
+```
+
+**6. Stereo symmetry:** Left and right channels should be identical for all generators (mono content in stereo frame).
+
+### Beat timing logic tests
+
+The `beatIntervalFromAsteroidCount` function and `beatTick` logic are pure state-machine operations:
+
+```go
+func TestBeatIntervalFromAsteroidCount(t *testing.T) {
+    tests := []struct {
+        count    int
+        expected int
+    }{
+        {20, 60},   // capped at max
+        {12, 60},   // still at max
+        {6, 39},    // mid-game
+        {1, 19},    // almost cleared
+        {0, 15},    // minimum interval
+    }
+    for _, tt := range tests {
+        got := beatIntervalFromAsteroidCount(tt.count)
+        if got != tt.expected {
+            t.Errorf("count=%d: expected interval %d, got %d",
+                tt.count, tt.expected, got)
+        }
+    }
+}
+```
+
+Extract the beat decision logic so it can be tested without audio playback:
+
+```go
+// beatTick advances the beat timer and returns whether a beat should play
+// and which tone (low=false, high=true).
+func (sm *SoundManager) beatTick(asteroidCount int) (shouldPlay bool, isHigh bool) {
+    sm.beatInterval = beatIntervalFromAsteroidCount(asteroidCount)
+    sm.beatTimer--
+    if sm.beatTimer <= 0 {
+        sm.beatTimer = sm.beatInterval
+        sm.beatHigh = !sm.beatHigh
+        return true, sm.beatHigh
+    }
+    return false, false
+}
+```
+
+Test this as a sequence:
+```go
+func TestBeatTick_AlternatesHighLow(t *testing.T) {
+    sm := &SoundManager{beatTimer: 1, beatHigh: false, beatInterval: 30}
+    play, high := sm.beatTick(10)
+    if !play { t.Fatal("expected beat to play") }
+    if !high { t.Error("expected high tone (toggled from false)") }
+
+    sm.beatTimer = 1
+    play, high = sm.beatTick(10)
+    if !play { t.Fatal("expected beat to play") }
+    if high { t.Error("expected low tone (toggled from true)") }
+}
+```
+
+### Nil-receiver safety tests
+
+```go
+func TestSoundManager_NilSafe(t *testing.T) {
+    var sm *SoundManager
+    // None of these should panic
+    sm.PlayFire()
+    sm.PlayExplosion(SizeLarge)
+    sm.PlayExplosion(SizeMedium)
+    sm.PlayExplosion(SizeSmall)
+    sm.PlayDeath()
+    sm.StartThrust()
+    sm.StopThrust()
+    sm.UpdateBeat(5)
+    sm.PauseAll()
+    sm.ResumeAll()
+    sm.StopAll()
+    sm.Reset()
+    sm.SetMasterVolume(0.5)
+}
+```
+
+### Integration / manual testing
+
+`SoundManager` methods that create `audio.Player` instances need the Ebitengine audio context, which requires the runtime. For these:
+
+- **Manual play-testing** is essential. During development, add temporary debug keys (e.g., `1`-`5` on keyboard) that trigger each sound for rapid iteration. Remove before release.
+- The waveform parameter values in this spec (frequencies, durations, decay rates, mix levels) are starting points. Expect to tune them by ear.
+
+---
+
+## 12. Implementation Order
+
+1. **`sound_gen.go` + `sound_test.go`** -- Write all waveform generators and their unit tests. Zero Ebitengine audio dependency. Can be developed and tested with `go test` immediately.
+
+2. **`sound.go` basics** -- `SoundManager` struct, `NewSoundManager()`, one-shot methods (`PlayFire`, `PlayExplosion`, `PlayDeath`). Add `sound *SoundManager` field to `Game` struct. Lazy init in `reset()`. Wire up the three one-shot trigger points in `updatePlaying()`. Manual test.
+
+3. **Thrust loop** -- Add `StartThrust()` / `StopThrust()` using `audio.InfiniteLoop`. Wire up in `updatePlaying()` after `InputSystem(w)`. Manual test.
+
+4. **Heartbeat** -- Add `UpdateBeat()` with `beatIntervalFromAsteroidCount` tempo mapping. Wire up in `updatePlaying()`. Add unit tests for `beatIntervalFromAsteroidCount` and `beatTick`. Manual test.
+
+5. **State transition hooks** -- Add `PauseAll()` / `ResumeAll()` / `StopAll()` calls at pause, unpause, game-over, reset, and quit-to-menu transitions.
+
+6. **Volume setting** -- Add `masterVolume` to `settings` struct, update settings menu labels and handlers, wire `SetMasterVolume()` through to `SoundManager`.
+
+7. **Saucer stubs** -- Add `StartSaucer()` / `StopSaucer()` no-op methods for future UFO feature.
+
+8. **Polish** -- Tune waveform parameters by ear. The numeric values in this spec are starting points informed by analysis of the original arcade sounds.
