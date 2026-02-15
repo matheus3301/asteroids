@@ -27,6 +27,7 @@ var pauseMenuItems = []menuItem{
 var settingsLabels = []string{
 	"RESOLUTION",
 	"FULLSCREEN",
+	"VOLUME",
 	"BACK",
 }
 
@@ -38,14 +39,20 @@ func (g *Game) updateMenu() {
 		if g.menuCursor < 0 {
 			g.menuCursor = len(mainMenuItems) - 1
 		}
+		g.ensureSound()
+		g.sound.PlayBlip()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyDown) {
 		g.menuCursor++
 		if g.menuCursor >= len(mainMenuItems) {
 			g.menuCursor = 0
 		}
+		g.ensureSound()
+		g.sound.PlayBlip()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
+		g.ensureSound()
+		g.sound.PlayConfirm()
 		g.menuSelect()
 	}
 }
@@ -97,28 +104,40 @@ func (g *Game) updateSettings() {
 		if g.settingsCursor < 0 {
 			g.settingsCursor = len(settingsLabels) - 1
 		}
+		g.ensureSound()
+		g.sound.PlayBlip()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyDown) {
 		g.settingsCursor++
 		if g.settingsCursor >= len(settingsLabels) {
 			g.settingsCursor = 0
 		}
+		g.ensureSound()
+		g.sound.PlayBlip()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
+		g.ensureSound()
+		g.sound.PlayConfirm()
 		g.settingsSelect()
-		if g.settingsCursor < 2 {
+		if g.settingsCursor < 2 { // resolution and fullscreen
 			g.settings.apply()
 		}
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyLeft) {
+		g.ensureSound()
 		g.settingsLeft()
+		g.sound.PlayBlip()
 		g.settings.apply()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyRight) {
+		g.ensureSound()
 		g.settingsRight()
+		g.sound.PlayBlip()
 		g.settings.apply()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.ensureSound()
+		g.sound.PlayBlip()
 		g.state = stateMenu
 	}
 }
@@ -129,7 +148,8 @@ func (g *Game) settingsSelect() {
 		g.settings.resolutionIndex = (g.settings.resolutionIndex + 1) % len(resolutions)
 	case 1: // Fullscreen — toggle
 		g.settings.fullscreen = !g.settings.fullscreen
-	case 2: // Back
+	case 2: // Volume — no-op on Enter
+	case 3: // Back
 		g.state = stateMenu
 	}
 }
@@ -143,6 +163,12 @@ func (g *Game) settingsLeft() {
 		}
 	case 1:
 		g.settings.fullscreen = !g.settings.fullscreen
+	case 2:
+		g.settings.volume--
+		if g.settings.volume < 0 {
+			g.settings.volume = 0
+		}
+		g.sound.SetMasterVolume(float64(g.settings.volume) / 10.0)
 	}
 }
 
@@ -152,6 +178,12 @@ func (g *Game) settingsRight() {
 		g.settings.resolutionIndex = (g.settings.resolutionIndex + 1) % len(resolutions)
 	case 1:
 		g.settings.fullscreen = !g.settings.fullscreen
+	case 2:
+		g.settings.volume++
+		if g.settings.volume > 10 {
+			g.settings.volume = 10
+		}
+		g.sound.SetMasterVolume(float64(g.settings.volume) / 10.0)
 	}
 }
 
@@ -186,6 +218,8 @@ func (g *Game) drawSettings(screen *ebiten.Image) {
 				val = "ON"
 			}
 			text = fmt.Sprintf("%s: %s", label, val)
+		case 2:
+			text = fmt.Sprintf("%s: %d%%", label, g.settings.volume*10)
 		default:
 			text = label
 		}
@@ -208,6 +242,8 @@ func (g *Game) drawSettings(screen *ebiten.Image) {
 
 func (g *Game) updatePaused() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.sound.PlayConfirm()
+		g.sound.ResumeAll()
 		g.state = statePlaying
 		return
 	}
@@ -216,14 +252,17 @@ func (g *Game) updatePaused() {
 		if g.pauseCursor < 0 {
 			g.pauseCursor = len(pauseMenuItems) - 1
 		}
+		g.sound.PlayBlip()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyDown) {
 		g.pauseCursor++
 		if g.pauseCursor >= len(pauseMenuItems) {
 			g.pauseCursor = 0
 		}
+		g.sound.PlayBlip()
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
+		g.sound.PlayConfirm()
 		g.pauseSelect()
 	}
 }
@@ -231,8 +270,10 @@ func (g *Game) updatePaused() {
 func (g *Game) pauseSelect() {
 	switch g.pauseCursor {
 	case 0: // Resume
+		g.sound.ResumeAll()
 		g.state = statePlaying
 	case 1: // Quit to Menu
+		g.sound.StopAll()
 		g.state = stateMenu
 	}
 }

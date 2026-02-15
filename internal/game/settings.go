@@ -16,6 +16,7 @@ var resolutions = []resolution{
 type settings struct {
 	resolutionIndex int
 	fullscreen      bool
+	volume          int // 0-10, default 10
 }
 
 func (s *settings) apply() {

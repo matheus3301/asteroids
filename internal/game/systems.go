@@ -342,6 +342,7 @@ func respawnPlayer(w *World, e Entity) {
 // killPlayer decrements lives and handles respawn or game-over cleanup.
 func killPlayer(w *World, e Entity) {
 	w.Lives--
+	w.SoundQueue = append(w.SoundQueue, SoundPlayerDeath)
 	destroySaucerAndBullets(w)
 	w.SaucerSpawnTimer = saucerRespawnDelay
 	if w.Lives <= 0 {
@@ -401,6 +402,7 @@ func ShootingSystem(w *World) {
 	for e, pc := range w.players {
 		if pc.ShootPressed && w.BulletCount() < MaxPlayerBullets {
 			SpawnBullet(w, e)
+			w.SoundQueue = append(w.SoundQueue, SoundFire)
 		}
 	}
 }
@@ -511,6 +513,7 @@ func CollisionResponseSystem(w *World, events CollisionEvent) {
 			SpawnAsteroid(w, apos.X, apos.Y, nextSize)
 		}
 
+		w.SoundQueue = append(w.SoundQueue, soundForSize(ast.Size))
 		w.Destroy(hit.Bullet)
 		w.Destroy(hit.Asteroid)
 	}
@@ -535,6 +538,7 @@ func CollisionResponseSystem(w *World, events CollisionEvent) {
 			SpawnParticle(w, spos.X, spos.Y)
 		}
 
+		w.SoundQueue = append(w.SoundQueue, SoundExplosionLarge)
 		w.Destroy(hit.Bullet)
 		w.Destroy(hit.Saucer)
 		w.SaucerActive = 0

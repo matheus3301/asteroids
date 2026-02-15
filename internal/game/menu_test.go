@@ -198,7 +198,7 @@ func TestSettingsSelect_FullscreenToggles(t *testing.T) {
 func TestSettingsSelect_Back(t *testing.T) {
 	g := New()
 	g.state = stateSettings
-	g.settingsCursor = 2
+	g.settingsCursor = 3
 	g.settingsSelect()
 
 	if g.state != stateMenu {
@@ -323,6 +323,57 @@ func TestSettings_DefaultValues(t *testing.T) {
 	}
 	if g.settings.fullscreen {
 		t.Error("expected fullscreen to default to false")
+	}
+	if g.settings.volume != 10 {
+		t.Errorf("expected default volume 10, got %d", g.settings.volume)
+	}
+}
+
+func TestSettingsRight_VolumeIncrement(t *testing.T) {
+	g := New()
+	g.state = stateSettings
+	g.settingsCursor = 2
+	g.settings.volume = 5
+
+	g.settingsRight()
+	if g.settings.volume != 6 {
+		t.Errorf("expected volume 6, got %d", g.settings.volume)
+	}
+}
+
+func TestSettingsLeft_VolumeDecrement(t *testing.T) {
+	g := New()
+	g.state = stateSettings
+	g.settingsCursor = 2
+	g.settings.volume = 5
+
+	g.settingsLeft()
+	if g.settings.volume != 4 {
+		t.Errorf("expected volume 4, got %d", g.settings.volume)
+	}
+}
+
+func TestSettingsRight_VolumeClampMax(t *testing.T) {
+	g := New()
+	g.state = stateSettings
+	g.settingsCursor = 2
+	g.settings.volume = 10
+
+	g.settingsRight()
+	if g.settings.volume != 10 {
+		t.Errorf("expected volume clamped at 10, got %d", g.settings.volume)
+	}
+}
+
+func TestSettingsLeft_VolumeClampMin(t *testing.T) {
+	g := New()
+	g.state = stateSettings
+	g.settingsCursor = 2
+	g.settings.volume = 0
+
+	g.settingsLeft()
+	if g.settings.volume != 0 {
+		t.Errorf("expected volume clamped at 0, got %d", g.settings.volume)
 	}
 }
 

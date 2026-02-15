@@ -30,6 +30,8 @@ type World struct {
 	NextExtraLifeAt  int
 	SaucerActive     Entity
 	SaucerSpawnTimer int
+
+	SoundQueue []SoundEvent
 }
 
 func NewWorld() *World {

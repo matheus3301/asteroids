@@ -40,6 +40,7 @@ const (
 type Game struct {
 	world *World
 	state state
+	sound *SoundManager
 
 	menuCursor     int
 	settingsCursor int
@@ -52,10 +53,21 @@ func New() *Game {
 	g := &Game{
 		state: stateMenu,
 	}
+	g.settings.volume = 10
 	return g
 }
 
+func (g *Game) ensureSound() {
+	if g.sound == nil {
+		g.sound = NewSoundManager()
+		g.sound.SetMasterVolume(float64(g.settings.volume) / 10.0)
+	}
+}
+
 func (g *Game) reset() {
+	g.ensureSound()
+	g.sound.Reset()
+	g.sound.SetMasterVolume(float64(g.settings.volume) / 10.0)
 	g.world = NewWorld()
 	g.state = statePlaying
 	w := g.world
@@ -84,6 +96,7 @@ func (g *Game) Update() error {
 		g.updatePaused()
 	case stateGameOver:
 		if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
+			g.sound.PlayConfirm()
 			g.state = stateMenu
 		}
 	}
@@ -92,6 +105,7 @@ func (g *Game) Update() error {
 
 func (g *Game) updatePlaying() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.sound.PauseAll()
 		g.state = statePaused
 		g.pauseCursor = 0
 		return
@@ -113,7 +127,10 @@ func (g *Game) updatePlaying() {
 	CollisionResponseSystem(w, events)
 	WaveClearSystem(w)
 
+	SoundSystem(g.sound, w)
+
 	if w.Lives <= 0 {
+		g.sound.StopAll()
 		g.state = stateGameOver
 	}
 }
